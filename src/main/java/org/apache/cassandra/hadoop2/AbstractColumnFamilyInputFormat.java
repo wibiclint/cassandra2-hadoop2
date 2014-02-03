@@ -112,7 +112,7 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
 
     public List<InputSplit> getSplits(JobContext context) throws IOException
     {
-        logger.info("*** Getting input splits!!!!!!!!! ***");
+        //logger.info("*** Getting input splits!!!!!!!!! ***");
         Configuration conf = context.getConfiguration();
 
         validateConfiguration(conf);
