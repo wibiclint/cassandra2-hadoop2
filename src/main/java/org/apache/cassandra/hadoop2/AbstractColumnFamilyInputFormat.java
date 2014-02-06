@@ -112,20 +112,21 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
 
     public List<InputSplit> getSplits(JobContext context) throws IOException
     {
-        //logger.info("*** Getting input splits!!!!!!!!! ***");
+        logger.info("-------------------- Getting input splits --------------------");
         Configuration conf = context.getConfiguration();
 
         validateConfiguration(conf);
 
-        // cannonical ranges and nodes holding replicas
+        // Canonical ranges and nodes holding replicas
         List<TokenRange> masterRangeNodes = getRangeMap(conf);
+        logger.info("Got " + masterRangeNodes.size() + " master range nodes");
 
         keyspace = ConfigHelper.getInputKeyspace(context.getConfiguration());
         cfName = ConfigHelper.getInputColumnFamily(context.getConfiguration());
         partitioner = ConfigHelper.getInputPartitioner(context.getConfiguration());
         logger.debug("partitioner is " + partitioner);
 
-        // cannonical ranges, split into pieces, fetching the splits in parallel
+        // Canonical ranges, split into pieces, fetching the splits in parallel
         ExecutorService executor = Executors.newCachedThreadPool();
         List<InputSplit> splits = new ArrayList<InputSplit>();
 
@@ -180,6 +181,8 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
                     }
                 }
             }
+
+            logger.info("There are a total of " + splitfutures.size() + " splitFutures to turn into input splits!");
 
             // wait until we have all the results back
             for (Future<List<InputSplit>> futureInputSplits : splitfutures)

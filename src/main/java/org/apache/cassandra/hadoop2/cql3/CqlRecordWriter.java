@@ -107,6 +107,7 @@ final class CqlRecordWriter extends AbstractColumnFamilyRecordWriter<Map<String,
             if (cqlQuery.toLowerCase().startsWith("insert"))
                 throw new UnsupportedOperationException("INSERT with CqlRecordWriter is not supported, please use UPDATE/DELETE statement");
             cql = appendKeyWhereClauses(cqlQuery);
+            logger.info("CQL query for writing = " + cql);
 
             if (client != null)
             {
