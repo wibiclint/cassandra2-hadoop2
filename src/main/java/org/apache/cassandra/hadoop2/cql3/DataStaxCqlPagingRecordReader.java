@@ -17,39 +17,74 @@
  */
 package org.apache.cassandra.hadoop2.cql3;
 
-import com.datastax.driver.core.Row;
-import com.datastax.driver.core.Statement;
-import com.google.common.collect.AbstractIterator;
-import com.google.common.collect.Iterables;
-import org.apache.cassandra.db.marshal.AbstractType;
-import org.apache.cassandra.db.marshal.CompositeType;
-import org.apache.cassandra.db.marshal.LongType;
-import org.apache.cassandra.db.marshal.TypeParser;
-import org.apache.cassandra.dht.IPartitioner;
-import org.apache.cassandra.exceptions.ConfigurationException;
-import org.apache.cassandra.exceptions.SyntaxException;
+import com.datastax.driver.core.*;
+
+
+import com.datastax.driver.core.exceptions.*;
+import com.google.common.base.Joiner;
 import org.apache.cassandra.hadoop2.ColumnFamilySplit;
 import org.apache.cassandra.hadoop2.ConfigHelper;
-import org.apache.cassandra.thrift.*;
-import org.apache.cassandra.utils.ByteBufferUtil;
-import org.apache.cassandra.utils.FBUtilities;
-import org.apache.cassandra.utils.Pair;
+import org.apache.cassandra.thrift.ConsistencyLevel;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.apache.hadoop.mapreduce.RecordReader;
 import org.apache.hadoop.mapreduce.TaskAttemptContext;
-import org.apache.thrift.TException;
-import org.apache.thrift.transport.TTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
 import java.util.*;
+
+/*
+  Note: A lot of the code below uses "token" functions in CQL to limit queries such that they hit
+  only a single token range (i.e., that they go to only a particular set of replica nodes).
+
+  You can pay around with the "token" function in the CQLSH.  See this example below:
+
+  cqlsh:fiddle> DESCRIBE TABLE weather;
+
+  CREATE TABLE weather (
+    state text,
+    city text,
+    temp int,
+    PRIMARY KEY ((state, city))
+  ) WITH
+    bloom_filter_fp_chance=0.010000 AND
+    caching='KEYS_ONLY' AND
+    comment='' AND
+    dclocal_read_repair_chance=0.000000 AND
+    gc_grace_seconds=864000 AND
+    index_interval=128 AND
+    read_repair_chance=0.100000 AND
+    replicate_on_write='true' AND
+    populate_io_cache_on_flush='false' AND
+    default_time_to_live=0 AND
+    speculative_retry='99.0PERCENTILE' AND
+    memtable_flush_period_in_ms=0 AND
+    compaction={'class': 'SizeTieredCompactionStrategy'} AND
+    compression={'sstable_compression': 'LZ4Compressor'};
+
+  cqlsh:fiddle> SELECT * FROM weather;
+
+   state | city     | temp
+  -------+----------+------
+      CA |       SF |   50
+      MD | Bethesda |   20
+
+  (2 rows)
+
+  cqlsh:fiddle> SELECT TOKEN(state, city), state, city FROM weather;
+
+   token(state, city)   | state | city
+  ----------------------+-------+----------
+   -1403708236372916509 |    CA |       SF
+    1447693064552575148 |    MD | Bethesda
+
+  (2 rows)
+
+ */
 
 /**
  * Hadoop RecordReader to read values returned from a CQL query for processing in Hadoop.
@@ -62,665 +97,242 @@ import java.util.*;
  * and make that the Mapper key.
  *
  */
-public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row>
-        implements org.apache.hadoop.mapred.RecordReader<Text, Row>  {
+public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
   private static final Logger LOG = LoggerFactory.getLogger(DataStaxCqlPagingRecordReader.class);
 
-  public static final int DEFAULT_CQL_PAGE_LIMIT = 1000; // TODO: find the number large enough but not OOM
+  /** TODO: Find a reasonable value for this. */
+  public static final int DEFAULT_CQL_PAGE_LIMIT = 1000;
 
+  /** Information (start and end tokens, total number of rows) for this split. */
   private ColumnFamilySplit mColumnFamilySplit;
+
+  /** Iterator over all of the rows for this split.  Handles paging transparently. */
   private Iterator<Row> mRowIterator;
+
+  /** Current row. */
   private Row mCurrentRow;
 
-  private String mKeyspace;
-  private String mColumnFamilyName;
-  private Cassandra.Client mClient;
+  /** Open session for queries. */
+  private Session mSession;
 
-  private ConsistencyLevel mConsistencyLevel;
+  /** Count of total number of rows returned so far.  Used for progress reporting. */
+  private int mRowCount;
 
-  private int totalRowCount; // total number of rows to fetch
-
-  // partition keys -- key aliases
-  private List<BoundColumn> partitionBoundColumns = new ArrayList<BoundColumn>();
-
-  // cluster keys -- column aliases
-  private List<BoundColumn> clusterColumns = new ArrayList<BoundColumn>();
-
-  // map prepared query type to item id
-  private Map<Integer, Integer> preparedQueryIds = new HashMap<Integer, Integer>();
-
-  // cql query select columns
-  private String columns;
-
-  // the number of cql rows per page
-  private int pageRowSize;
-
-  // user defined where clauses
-  private String userDefinedWhereClauses;
-
-  private IPartitioner partitioner;
-
-  private AbstractType<?> keyValidator;
-
+  /** {@inheritDoc} */
   public DataStaxCqlPagingRecordReader() { super(); }
 
   /** {@inheritDoc} */
   @Override
   public void initialize(InputSplit split, TaskAttemptContext context) throws IOException {
-    // Extract some useful information out of the job configuration
-    this.mColumnFamilySplit = (ColumnFamilySplit) split;
-    Configuration conf = context.getConfiguration();
-    mColumnFamilyName = ConfigHelper.getInputColumnFamily(conf);
-    mConsistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
-    mKeyspace = ConfigHelper.getInputKeyspace(conf);
-    columns = CqlConfigHelper.getInputcolumns(conf);
-    userDefinedWhereClauses = CqlConfigHelper.getInputWhereClauses(conf);
+    // Get the partition key token range for this input split.
+    mColumnFamilySplit = (ColumnFamilySplit) split;
 
+    Configuration conf = context.getConfiguration();
+
+    // Get the keyspace, column family (CQL "table"), and the columns that the user is interested in.
+    String columnFamilyName = ConfigHelper.getInputColumnFamily(conf);
+    String keyspace = ConfigHelper.getInputKeyspace(conf);
+    String userRequestedColumns = CqlConfigHelper.getInputcolumns(conf);
+
+    // The user can add "WHERE" clauses to the query (we shall also add a "WHERE" clause later to
+    // limit the partition key ranges such that we hit onl a single set of replica nodes).
+    String userDefinedWhereClauses = CqlConfigHelper.getInputWhereClauses(conf);
+
+    // The user can also specify a consistency level for the reads for this Hadoop job.
+    ConsistencyLevel consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
+
+    // TODO: Putting a try/catch statement here seems super-kludgy, need to fix this...
+    int pageRowSize;
     try {
       pageRowSize = Integer.parseInt(CqlConfigHelper.getInputPageRowSize(conf));
     } catch (NumberFormatException e) {
       pageRowSize = DEFAULT_CQL_PAGE_LIMIT;
     }
 
+    // Get a connection to one of the data nodes for this input split.
+    String backupHost = ConfigHelper.getInputInitialAddress(conf);
+    int port = ConfigHelper.getInputRpcPort(conf);
+    mSession = openSession(
+        mColumnFamilySplit.getLocations(),
+        backupHost,
+        port);
+
+    // TODO: Pick a better exception type here.
+    if (null == mSession) {
+      throw new RuntimeException("Could not connect to any hosts!");
+    }
+
     // Actually execute the query to create the row iterator!
+    ResultSet resultSet = composeAndExecuteQuery(
+        mSession,
+        keyspace,
+        columnFamilyName,
+        userRequestedColumns,
+        userDefinedWhereClauses,
+        mColumnFamilySplit.getStartToken(),
+        mColumnFamilySplit.getEndToken()
+    );
 
+    mCurrentRow = null;
+    mRowCount = 0;
+    mRowIterator = resultSet.iterator();
+
+    // TODO: Fetch the first row?
+    //this.nextKeyValue();
   }
 
-  // Create the query that will fetch data for the mapreduce job.
-  private Statement createQuery() {
+  /**
+   * Create an open session for reading data for this input split.
+   *
+   * Preferably connect to one of the replica nodes for the token range for this input split.  If
+   * none are available, fall back to the original coordinator node supplied by the user.
+   *
+   * @param dataNodes List of replica nodes for the token range for this input split.
+   * @param coordinatorNode User-specified coordinator node to use as a backup.
+   * @param port RPC port for Cassandra connections.
+   * @return An open session to one of the nodes.
+   */
+  private Session openSession(String[] dataNodes, String coordinatorNode, int port) {
+    // Add all of the data nodes for this input split.
+    List<String> allHostsToTry = Arrays.asList(dataNodes);
 
-    // Create a statement that properly limits the token ranges for the partition key.  This should
-    // look something like the following:
-    //
+    // As a backup, try the original coordinator node specified by the user.
+    //allHostsToTry.add(coordinatorNode);
 
-    // Assign values to any of the other columns that the user has specified with a where clause.
-
+    for (String host: allHostsToTry) {
+      LOG.info(">>>>>>>>>>>>>> Trying to connect to host " + host + " with port " + port);
+      try {
+        Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
+        return cluster.connect();
+      } catch (NoHostAvailableException e) {
+        Map<InetAddress, Throwable> errors = e.getErrors();
+        for (InetAddress addr : errors.keySet()) {
+          LOG.info(">>>> Problem with address " + addr + " was " + errors.get(addr).toString());
+        }
+        LOG.info(">>>>> " + e.toString());
+        continue;
+      } catch (com.datastax.driver.core.exceptions.AuthenticationException e) {
+        LOG.info(e.toString());
+        continue;
+      }
+    }
+    return null;
   }
 
+  /**
+   * Create a Cassandra CQL query for the specified Hadoop job and execute it, returning a result set.
+   *
+   * The method will extract a list of the partition key columns from the `TableMetadata` for the
+   * table being queries and use those columns, along with the start and end tokens, to limit the
+   * query such that it touches only rows on a single replica node for this session.
+   *
+   * @param session Open session, most likely to one of the replica nodes for this split.
+   * @param keyspace The C* keyspace.
+   * @param table The C* table (column family) to query.
+   * @param userRequestColumnsCommaSeparatedList The list of columns that the user would like to get
+   *                                             back (can be null, which means fetch all).
+   * @param userDefinedWhereClauses The list of filtering WHERE clauses that the users has specified
+   *                                (Can be null).
+   * @param startToken The partition key start token for this split.
+   * @param endToken The partition key end token for this split.
+   * @return The ResultSet containing the results of the query.
+   */
+  private ResultSet composeAndExecuteQuery(
+      Session session,
+      String keyspace,
+      String table,
+      String userRequestColumnsCommaSeparatedList,
+      String userDefinedWhereClauses,
+      String startToken,
+      String endToken
+  ) {
 
+    session.execute(String.format("USE \"%s\";", keyspace));
 
+    // The query we shall construct has the following components:
+    // - The columns that the user has requested.
+    // - Any "WHERE" clauses that the user has added.
+    // - An additional "WHERE" clause that limits the partition key range to only this input split.
 
+    // Select the columns that the user will be able to access in the Mapper.
+    // If the user did not specify any columns, then select everything.
+    // TODO: Shall we include the partition key columns automatically?
+    String userColumnsOrAll = (null == userRequestColumnsCommaSeparatedList)
+        ? "*"
+        : userRequestColumnsCommaSeparatedList;
+
+    // Add additional WHERE clauses to filter the incoming data.
+    String userWhereOrBlank = (null == userDefinedWhereClauses)
+        ? ""
+        : " AND " + userDefinedWhereClauses;
+
+    // Get a comma-separated list of the partition keys.
+    String partitionKeyList = getPartitionKeyCommaSeparatedList(session, keyspace, table);
+
+    String query = String.format(
+        "SELECT %s FROM \"%s\" WHERE token(%s) > ? AND token(%s) <= ? %s ALLOW FILTERING;",
+        userColumnsOrAll,
+        table,
+        partitionKeyList,
+        partitionKeyList,
+        userWhereOrBlank
+    );
+
+    // Bind the token limits to this query and execute!
+    PreparedStatement preparedStatement = session.prepare(query);
+    return session.execute(preparedStatement.bind(startToken, endToken));
+  }
+
+  /**
+   * Return a comma-separated list of the columns forming the partition key for this table.
+   *
+   * @param session Open session, most likely to one of the replica nodes for this split.
+   * @param keyspace The C* keyspace.
+   * @param table The C* table (column family) to query.
+   * @return A comma-separated list (as a String) of the columns forming the partition key.
+   */
+  private String getPartitionKeyCommaSeparatedList(Session session, String keyspace, String table) {
+    TableMetadata tableMetadata = session
+        .getCluster()
+        .getMetadata()
+        .getKeyspace(keyspace)
+        .getTable(table);
+    List<ColumnMetadata> partitionKeyColumns = tableMetadata.getPartitionKey();
+    List<String> columnList = new ArrayList<String>();
+    for (ColumnMetadata columnMetadata : partitionKeyColumns) {
+      columnList.add(columnMetadata.getName());
+    }
+    return Joiner.on(",").join(columnList);
+  }
+
+  /** {@inheritDoc} */
   public void close() {
+    mSession.shutdown();
   }
 
-  public Map<String, ByteBuffer> getCurrentKey() {}
+  /** {@inheritDoc} */
+  public Text getCurrentKey() { return new Text("foo"); }
 
-  public Map<String, ByteBuffer> getCurrentValue() {}
+  /** {@inheritDoc} */
+  public Row getCurrentValue() { return mCurrentRow; }
 
-  public float getProgress() {}
-
-  public boolean nextKeyValue() throws IOException {}
-
-
-
-
-
-
-
-
-
-
-
-
-
-  // we don't use endpointsnitch since we are trying to support hadoop nodes that are
-  // not necessarily on Cassandra machines, too.  This should be adequate for single-DC clusters, at least.
-  private String getLocation()
-  {
-    Collection<InetAddress> localAddresses = FBUtilities.getAllLocalAddresses();
-
-    for (InetAddress address : localAddresses)
-    {
-      for (String location : split.getLocations())
-      {
-        InetAddress locationAddress;
-        try
-        {
-          locationAddress = InetAddress.getByName(location);
-        }
-        catch (UnknownHostException e)
-        {
-          throw new AssertionError(e);
-        }
-        if (address.equals(locationAddress))
-        {
-          return location;
-        }
-      }
+  /** {@inheritDoc} */
+  public float getProgress() {
+    if (null == mCurrentRow) {
+      return 0.0f;
+    } else {
+      return ((float) mRowCount) / mColumnFamilySplit.getLength();
     }
-    return split.getLocations()[0];
   }
 
-  // Because the old Hadoop API wants us to write to the key and value
-  // and the new asks for them, we need to copy the output of the new API
-  // to the old. Thus, expect a small performance hit.
-  // And obviously this wouldn't work for wide rows. But since ColumnFamilyInputFormat
-  // and ColumnFamilyRecordReader don't support them, it should be fine for now.
-  public boolean next(Map<String, ByteBuffer> keys, Map<String, ByteBuffer> value) throws IOException
-  {
-    if (nextKeyValue())
-    {
-      value.clear();
-      value.putAll(getCurrentValue());
-
-      keys.clear();
-      keys.putAll(getCurrentKey());
-
+  /** {@inheritDoc} */
+  public boolean nextKeyValue() throws IOException {
+    if (mRowIterator.hasNext()) {
+      mCurrentRow = mRowIterator.next();
+      mRowCount += 1;
       return true;
-    }
-    return false;
-  }
-
-  public long getPos() throws IOException
-  {
-    return (long) rowIterator.totalRead;
-  }
-
-  public Map<String, ByteBuffer> createKey()
-  {
-    return new LinkedHashMap<String, ByteBuffer>();
-  }
-
-  public Map<String, ByteBuffer> createValue()
-  {
-    return new LinkedHashMap<String, ByteBuffer>();
-  }
-
-  /** CQL row iterator */
-  private class RowIterator extends AbstractIterator<Pair<Map<String, ByteBuffer>, Map<String, ByteBuffer>>>
-  {
-    protected int totalRead = 0;             // total number of cf rows read
-    protected Iterator<CqlRow> rows;
-    private int pageRows = 0;                // the number of cql rows read of this page
-    private String previousRowKey = null;    // previous CF row key
-    private String partitionKeyString;       // keys in <key1>, <key2>, <key3> string format
-    private String partitionKeyMarkers;      // question marks in ? , ? , ? format which matches the number of keys
-
-    public RowIterator()
-    {
-      // initial page
-      executeQuery();
-    }
-
-    protected Pair<Map<String, ByteBuffer>, Map<String, ByteBuffer>> computeNext()
-    {
-      if (rows == null)
-        return endOfData();
-
-      int index = -2;
-      //check there are more page to read
-      while (!rows.hasNext())
-      {
-        // no more data
-        if (index == -1 || emptyPartitionKeyValues())
-        {
-          logger.debug("no more data");
-          return endOfData();
-        }
-
-        index = setTailNull(clusterColumns);
-        logger.debug("set tail to null, index: {}", index);
-        executeQuery();
-        pageRows = 0;
-
-        if (rows == null || !rows.hasNext() && index < 0)
-        {
-          logger.debug("no more data");
-          return endOfData();
-        }
-      }
-
-      Map<String, ByteBuffer> valueColumns = createValue();
-      Map<String, ByteBuffer> keyColumns = createKey();
-      int i = 0;
-      CqlRow row = rows.next();
-      for (Column column : row.columns)
-      {
-        String columnName = stringValue(ByteBuffer.wrap(column.getName()));
-        logger.debug("column: {}", columnName);
-
-        if (i < partitionBoundColumns.size() + clusterColumns.size())
-          keyColumns.put(stringValue(column.name), column.value);
-        else
-          valueColumns.put(stringValue(column.name), column.value);
-
-        i++;
-      }
-
-      // increase total CQL row read for this page
-      pageRows++;
-
-      // increase total CF row read
-      if (newRow(keyColumns, previousRowKey))
-        totalRead++;
-
-      // read full page
-      if (pageRows >= pageRowSize || !rows.hasNext())
-      {
-        Iterator<String> newKeys = keyColumns.keySet().iterator();
-        for (BoundColumn column : partitionBoundColumns)
-          column.value = keyColumns.get(newKeys.next());
-
-        for (BoundColumn column : clusterColumns)
-          column.value = keyColumns.get(newKeys.next());
-
-        executeQuery();
-        pageRows = 0;
-      }
-
-      return Pair.create(keyColumns, valueColumns);
-    }
-
-    /** check whether start to read a new CF row by comparing the partition keys */
-    private boolean newRow(Map<String, ByteBuffer> keyColumns, String previousRowKey)
-    {
-      if (keyColumns.isEmpty())
-        return false;
-
-      String rowKey = "";
-      if (keyColumns.size() == 1)
-      {
-        rowKey = partitionBoundColumns.get(0).validator.getString(keyColumns.get(partitionBoundColumns.get(0).name));
-      }
-      else
-      {
-        Iterator<ByteBuffer> iter = keyColumns.values().iterator();
-        for (BoundColumn column : partitionBoundColumns)
-          rowKey = rowKey + column.validator.getString(ByteBufferUtil.clone(iter.next())) + ":";
-      }
-
-      logger.debug("previous RowKey: {}, new row key: {}", previousRowKey, rowKey);
-      if (previousRowKey == null)
-      {
-        this.previousRowKey = rowKey;
-        return true;
-      }
-
-      if (rowKey.equals(previousRowKey))
-        return false;
-
-      this.previousRowKey = rowKey;
-      return true;
-    }
-
-    /** set the last non-null key value to null, and return the previous index */
-    private int setTailNull(List<BoundColumn> values)
-    {
-      if (values.isEmpty())
-        return -1;
-
-      Iterator<BoundColumn> iterator = values.iterator();
-      int previousIndex = -1;
-      BoundColumn current;
-      while (iterator.hasNext())
-      {
-        current = iterator.next();
-        if (current.value == null)
-        {
-          int index = previousIndex > 0 ? previousIndex : 0;
-          BoundColumn column = values.get(index);
-          logger.debug("set key {} value to  null", column.name);
-          column.value = null;
-          return previousIndex - 1;
-        }
-
-        previousIndex++;
-      }
-
-      BoundColumn column = values.get(previousIndex);
-      logger.debug("set key {} value to  null", column.name);
-      column.value = null;
-      return previousIndex - 1;
-    }
-
-    /** serialize the prepared query, pair.left is query id, pair.right is query */
-    private Pair<Integer, String> composeQuery(String columns)
-    {
-      Pair<Integer, String> clause = whereClause();
-      if (columns == null)
-      {
-        columns = "*";
-      }
-      else
-      {
-        // add keys in the front in order
-        String partitionKey = keyString(partitionBoundColumns);
-        String clusterKey = keyString(clusterColumns);
-
-        columns = withoutKeyColumns(columns);
-        columns = (clusterKey == null || "".equals(clusterKey))
-            ? partitionKey + "," + columns
-            : partitionKey + "," + clusterKey + "," + columns;
-      }
-
-      String whereStr = userDefinedWhereClauses == null ? "" : " AND " + userDefinedWhereClauses;
-      return Pair.create(clause.left,
-          String.format("SELECT %s FROM %s%s%s LIMIT %d ALLOW FILTERING",
-              columns, quote(cfName), clause.right, whereStr, pageRowSize));
-    }
-
-
-    /** remove key columns from the column string */
-    private String withoutKeyColumns(String columnString)
-    {
-      Set<String> keyNames = new HashSet<String>();
-      for (BoundColumn column : Iterables.concat(partitionBoundColumns, clusterColumns))
-        keyNames.add(column.name);
-
-      String[] columns = columnString.split(",");
-      String result = null;
-      for (String column : columns)
-      {
-        String trimmed = column.trim();
-        if (keyNames.contains(trimmed))
-          continue;
-
-        String quoted = quote(trimmed);
-        result = result == null ? quoted : result + "," + quoted;
-      }
-      return result;
-    }
-
-    /** serialize the where clause */
-    private Pair<Integer, String> whereClause()
-    {
-      if (partitionKeyString == null)
-        partitionKeyString = keyString(partitionBoundColumns);
-
-      if (partitionKeyMarkers == null)
-        partitionKeyMarkers = partitionKeyMarkers();
-      // initial query token(k) >= start_token and token(k) <= end_token
-      if (emptyPartitionKeyValues())
-        return Pair.create(0, String.format(" WHERE token(%s) > ? AND token(%s) <= ?", partitionKeyString, partitionKeyString));
-
-      // query token(k) > token(pre_partition_key) and token(k) <= end_token
-      if (clusterColumns.size() == 0 || clusterColumns.get(0).value == null)
-        return Pair.create(1,
-            String.format(" WHERE token(%s) > token(%s)  AND token(%s) <= ?",
-                partitionKeyString, partitionKeyMarkers, partitionKeyString));
-
-      // query token(k) = token(pre_partition_key) and m = pre_cluster_key_m and n > pre_cluster_key_n
-      Pair<Integer, String> clause = whereClause(clusterColumns, 0);
-      return Pair.create(clause.left,
-          String.format(" WHERE token(%s) = token(%s) %s", partitionKeyString, partitionKeyMarkers, clause.right));
-    }
-
-    /** recursively serialize the where clause */
-    private Pair<Integer, String> whereClause(List<BoundColumn> column, int position)
-    {
-      if (position == column.size() - 1 || column.get(position + 1).value == null)
-        return Pair.create(position + 2, String.format(" AND %s > ? ", quote(column.get(position).name)));
-
-      Pair<Integer, String> clause = whereClause(column, position + 1);
-      return Pair.create(clause.left, String.format(" AND %s = ? %s", quote(column.get(position).name), clause.right));
-    }
-
-    /** check whether all key values are null */
-    private boolean emptyPartitionKeyValues()
-    {
-      for (BoundColumn column : partitionBoundColumns)
-      {
-        if (column.value != null)
-          return false;
-      }
-      return true;
-    }
-
-    /** serialize the partition key string in format of <key1>, <key2>, <key3> */
-    private String keyString(List<BoundColumn> columns)
-    {
-      String result = null;
-      for (BoundColumn column : columns)
-        result = result == null ? quote(column.name) : result + "," + quote(column.name);
-
-      return result == null ? "" : result;
-    }
-
-    /** serialize the question marks for partition key string in format of ?, ? , ? */
-    private String partitionKeyMarkers()
-    {
-      String result = null;
-      for (BoundColumn column : partitionBoundColumns)
-        result = result == null ? "?" : result + ",?";
-
-      return result;
-    }
-
-    /** serialize the query binding variables, pair.left is query id, pair.right is the binding variables */
-    private Pair<Integer, List<ByteBuffer>> preparedQueryBindValues()
-    {
-      List<ByteBuffer> values = new LinkedList<ByteBuffer>();
-
-      // initial query token(k) >= start_token and token(k) <= end_token
-      if (emptyPartitionKeyValues())
-      {
-        values.add(partitioner.getTokenValidator().fromString(split.getStartToken()));
-        values.add(partitioner.getTokenValidator().fromString(split.getEndToken()));
-        return Pair.create(0, values);
-      }
-      else
-      {
-        for (BoundColumn partitionBoundColumn1 : partitionBoundColumns)
-          values.add(partitionBoundColumn1.value);
-
-        if (clusterColumns.size() == 0 || clusterColumns.get(0).value == null)
-        {
-          // query token(k) > token(pre_partition_key) and token(k) <= end_token
-          values.add(partitioner.getTokenValidator().fromString(split.getEndToken()));
-          return Pair.create(1, values);
-        }
-        else
-        {
-          // query token(k) = token(pre_partition_key) and m = pre_cluster_key_m and n > pre_cluster_key_n
-          int type = preparedQueryBindValues(clusterColumns, 0, values);
-          return Pair.create(type, values);
-        }
-      }
-    }
-
-    /** recursively serialize the query binding variables */
-    private int preparedQueryBindValues(List<BoundColumn> column, int position, List<ByteBuffer> bindValues)
-    {
-      if (position == column.size() - 1 || column.get(position + 1).value == null)
-      {
-        bindValues.add(column.get(position).value);
-        return position + 2;
-      }
-      else
-      {
-        bindValues.add(column.get(position).value);
-        return preparedQueryBindValues(column, position + 1, bindValues);
-      }
-    }
-
-    /**  get the prepared query item Id  */
-    private int prepareQuery(int type) throws InvalidRequestException, TException
-    {
-      Integer itemId = preparedQueryIds.get(type);
-      if (itemId != null)
-        return itemId;
-
-      Pair<Integer, String> query = null;
-      query = composeQuery(columns);
-      logger.debug("type: {}, query: {}", query.left, query.right);
-      CqlPreparedResult cqlPreparedResult = client.prepare_cql3_query(ByteBufferUtil.bytes(query.right), Compression.NONE);
-      preparedQueryIds.put(query.left, cqlPreparedResult.itemId);
-      return cqlPreparedResult.itemId;
-    }
-
-    /** Quoting for working with uppercase */
-    private String quote(String identifier)
-    {
-      return "\"" + identifier.replaceAll("\"", "\"\"") + "\"";
-    }
-
-    /** execute the prepared query */
-    private void executeQuery()
-    {
-      Pair<Integer, List<ByteBuffer>> bindValues = preparedQueryBindValues();
-      logger.debug("query type: {}", bindValues.left);
-
-      // check whether it reach end of range for type 1 query CASSANDRA-5573
-      if (bindValues.left == 1 && reachEndRange())
-      {
-        rows = null;
-        return;
-      }
-
-      int retries = 0;
-      // only try three times for TimedOutException and UnavailableException
-      while (retries < 3)
-      {
-        try
-        {
-          CqlResult cqlResult = client.execute_prepared_cql3_query(prepareQuery(bindValues.left), bindValues.right, consistencyLevel);
-          if (cqlResult != null && cqlResult.rows != null)
-            rows = cqlResult.rows.iterator();
-          return;
-        }
-        catch (TimedOutException e)
-        {
-          retries++;
-          if (retries >= 3)
-          {
-            rows = null;
-            RuntimeException rte = new RuntimeException(e.getMessage());
-            rte.initCause(e);
-            throw rte;
-          }
-        }
-        catch (UnavailableException e)
-        {
-          retries++;
-          if (retries >= 3)
-          {
-            rows = null;
-            RuntimeException rte = new RuntimeException(e.getMessage());
-            rte.initCause(e);
-            throw rte;
-          }
-        }
-        catch (Exception e)
-        {
-          rows = null;
-          RuntimeException rte = new RuntimeException(e.getMessage());
-          rte.initCause(e);
-          throw rte;
-        }
-      }
-    }
-  }
-
-  /** retrieve the partition keys and cluster keys from system.schema_columnfamilies table */
-  private void retrieveKeys() throws Exception
-  {
-    String query = "select key_aliases," +
-        "column_aliases, " +
-        "key_validator, " +
-        "comparator " +
-        "from system.schema_columnfamilies " +
-        "where keyspace_name='%s' and columnfamily_name='%s'";
-    String formatted = String.format(query, keyspace, cfName);
-    CqlResult result = client.execute_cql3_query(ByteBufferUtil.bytes(formatted), Compression.NONE, ConsistencyLevel.ONE);
-
-    CqlRow cqlRow = result.rows.get(0);
-    String keyString = ByteBufferUtil.string(ByteBuffer.wrap(cqlRow.columns.get(0).getValue()));
-    logger.debug("partition keys: {}", keyString);
-    List<String> keys = FBUtilities.fromJsonList(keyString);
-
-    for (String key : keys)
-      partitionBoundColumns.add(new BoundColumn(key));
-
-    keyString = ByteBufferUtil.string(ByteBuffer.wrap(cqlRow.columns.get(1).getValue()));
-    logger.debug("cluster columns: {}", keyString);
-    keys = FBUtilities.fromJsonList(keyString);
-
-    for (String key : keys)
-      clusterColumns.add(new BoundColumn(key));
-
-    Column rawKeyValidator = cqlRow.columns.get(2);
-    String validator = ByteBufferUtil.string(ByteBuffer.wrap(rawKeyValidator.getValue()));
-    logger.debug("row key validator: {}", validator);
-    keyValidator = parseType(validator);
-
-    if (keyValidator instanceof CompositeType)
-    {
-      List<AbstractType<?>> types = ((CompositeType) keyValidator).types;
-      for (int i = 0; i < partitionBoundColumns.size(); i++)
-        partitionBoundColumns.get(i).validator = types.get(i);
-    }
-    else
-    {
-      partitionBoundColumns.get(0).validator = keyValidator;
-    }
-  }
-
-  /** check whether current row is at the end of range */
-  private boolean reachEndRange()
-  {
-    // current row key
-    ByteBuffer rowKey;
-    if (keyValidator instanceof CompositeType)
-    {
-      ByteBuffer[] keys = new ByteBuffer[partitionBoundColumns.size()];
-      for (int i = 0; i < partitionBoundColumns.size(); i++)
-        keys[i] = partitionBoundColumns.get(i).value.duplicate();
-
-      rowKey = CompositeType.build(keys);
-    }
-    else
-    {
-      rowKey = partitionBoundColumns.get(0).value;
-    }
-
-    String endToken = split.getEndToken();
-    String currentToken = partitioner.getToken(rowKey).toString();
-    logger.debug("End token: {}, current token: {}", endToken, currentToken);
-
-    return endToken.equals(currentToken);
-  }
-
-  private static AbstractType<?> parseType(String type) throws IOException
-  {
-    try
-    {
-      // always treat counters like longs, specifically CCT.serialize is not what we need
-      if (type != null && type.equals("org.apache.cassandra.db.marshal.CounterColumnType"))
-        return LongType.instance;
-      return TypeParser.parse(type);
-    }
-    catch (ConfigurationException e)
-    {
-      throw new IOException(e);
-    }
-    catch (SyntaxException e)
-    {
-      throw new IOException(e);
-    }
-  }
-
-  private static class BoundColumn
-  {
-    final String name;
-    ByteBuffer value;
-    AbstractType<?> validator;
-
-    public BoundColumn(String name)
-    {
-      this.name = name;
-    }
-  }
-
-  /** get string from a ByteBuffer, catch the exception and throw it as runtime exception*/
-  private static String stringValue(ByteBuffer value)
-  {
-    try
-    {
-      return ByteBufferUtil.string(value);
-    }
-    catch (CharacterCodingException e)
-    {
-      throw new RuntimeException(e);
+    } else {
+      return false;
     }
   }
 }

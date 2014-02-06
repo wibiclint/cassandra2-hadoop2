@@ -104,7 +104,7 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
   public RecordReader<Text, Row> createRecordReader(
       InputSplit inputSplit,
       TaskAttemptContext context) {
-    return null;
+    return new DataStaxCqlPagingRecordReader();
   }
 
   /** {@inheritDoc} */
@@ -181,6 +181,10 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
     } catch (InvalidRequestException e) {
       // TODO: No idea why this would happen...
       throw new RuntimeException(e);
+    } catch (TException e) {
+      // Yikes!
+      throw new RuntimeException(e);
+
     }
     return map;
   }
@@ -324,6 +328,9 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
       } catch (IOException e) {
         LOG.debug("failed connect to endpoint " + host, e);
       } catch (InvalidRequestException e) {
+        throw new RuntimeException(e);
+      } catch (TException e) {
+        // Yikes!
         throw new RuntimeException(e);
       }
     }

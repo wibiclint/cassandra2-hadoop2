@@ -29,6 +29,11 @@
             <scope>compile</scope>
         </dependency>
         <dependency>
+            <groupId>io.netty</groupId>
+            <artifactId>netty</artifactId>
+            <version>3.9.0.Final</version>
+        </dependency>
+        <dependency>
             <groupId>com.datastax.cassandra</groupId>
             <artifactId>cassandra-driver-core</artifactId>
             <version>2.0.0-rc2</version>

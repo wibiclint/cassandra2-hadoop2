@@ -104,6 +104,9 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
     public void initialize(InputSplit split, TaskAttemptContext context) throws IOException
     {
         this.split = (ColumnFamilySplit) split;
+        logger.info("Start token for split = {}", this.split.getStartToken());
+        logger.info("End token for split = {}", this.split.getEndToken());
+
         Configuration conf = context.getConfiguration();
         totalRowCount = (this.split.getLength() < Long.MAX_VALUE)
                       ? (int) this.split.getLength()
@@ -583,7 +586,7 @@ public class CqlPagingRecordReader extends RecordReader<Map<String, ByteBuffer>,
 
             Pair<Integer, String> query = null;
             query = composeQuery(columns);
-            logger.debug("type: {}, query: {}", query.left, query.right);
+            logger.info("type: {}, query: {}", query.left, query.right);
             CqlPreparedResult cqlPreparedResult = client.prepare_cql3_query(ByteBufferUtil.bytes(query.right), Compression.NONE);
             preparedQueryIds.put(query.left, cqlPreparedResult.itemId);
             return cqlPreparedResult.itemId;
