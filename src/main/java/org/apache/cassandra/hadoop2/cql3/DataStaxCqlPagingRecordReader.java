@@ -202,12 +202,15 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
     for (String host: allHostsToTry) {
       LOG.info(">>>>>>>>>>>>>> Trying to connect to host " + host + " with port " + port);
       try {
-        Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
+        //Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
+        Cluster cluster = Cluster.builder().addContactPoint("localhost").withPort(9042).build();
         return cluster.connect();
       } catch (NoHostAvailableException e) {
         Map<InetAddress, Throwable> errors = e.getErrors();
         for (InetAddress addr : errors.keySet()) {
-          LOG.info(">>>> Problem with address " + addr + " was " + errors.get(addr).toString());
+          LOG.info(">>>> Problem with address " + addr);
+          LOG.info(">>>> Problem was " + errors.get(addr).toString());
+          LOG.info(">>> Trace = " + errors.get(addr).getStackTrace());
         }
         LOG.info(">>>>> " + e.toString());
         continue;
@@ -280,7 +283,7 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
 
     // Bind the token limits to this query and execute!
     PreparedStatement preparedStatement = session.prepare(query);
-    return session.execute(preparedStatement.bind(startToken, endToken));
+    return session.execute(preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken)));
   }
 
   /**

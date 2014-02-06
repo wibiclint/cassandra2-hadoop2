@@ -92,6 +92,7 @@ public abstract class AbstractColumnFamilyInputFormat<K, Y> extends InputFormat<
     {
         logger.debug("Creating authenticated client for CF input format");
         //TTransport transport = ConfigHelper.getClientTransportFactory(conf).openTransport(location, port, conf);
+        logger.info(">>>>>>>>>>>> Connecting to host " + location + " and port " + port);
         TTransport transport = ConfigHelper.getClientTransportFactory(conf).openTransport(location, port);
         TProtocol binaryProtocol = new TBinaryProtocol(transport, true, true);
         Cassandra.Client client = new Cassandra.Client(binaryProtocol);
