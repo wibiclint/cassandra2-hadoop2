@@ -141,17 +141,9 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
     // The user can also specify a consistency level for the reads for this Hadoop job.
     ConsistencyLevel consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
 
-    // TODO: Putting a try/catch statement here seems super-kludgy, need to fix this...
-    int pageRowSize;
-    try {
-      pageRowSize = Integer.parseInt(CqlConfigHelper.getInputPageRowSize(conf));
-    } catch (NumberFormatException e) {
-      pageRowSize = DEFAULT_CQL_PAGE_LIMIT;
-    }
-
     // Get a connection to one of the data nodes for this input split.
     String backupHost = ConfigHelper.getInputInitialAddress(conf);
-    int port = ConfigHelper.getInputRpcPort(conf);
+    int port = ConfigHelper.getInputNativeTransportPort(conf);
     mSession = openSession(
         mColumnFamilySplit.getLocations(),
         backupHost,
@@ -202,8 +194,8 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
     for (String host: allHostsToTry) {
       LOG.info(">>>>>>>>>>>>>> Trying to connect to host " + host + " with port " + port);
       try {
-        //Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
-        Cluster cluster = Cluster.builder().addContactPoint("localhost").withPort(9042).build();
+        Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
+        //Cluster cluster = Cluster.builder().addContactPoint("localhost").withPort(9042).build();
         return cluster.connect();
       } catch (NoHostAvailableException e) {
         Map<InetAddress, Throwable> errors = e.getErrors();

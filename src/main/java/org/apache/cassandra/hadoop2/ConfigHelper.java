@@ -62,6 +62,7 @@ public class ConfigHelper
     private static final String RANGE_BATCH_SIZE_CONFIG = "cassandra.range.batch.size";
     private static final int DEFAULT_RANGE_BATCH_SIZE = 4096;
     private static final String INPUT_THRIFT_PORT = "cassandra.input.thrift.port";
+    private static final String INPUT_NATIVE_TRANSPORT_PORT = "cassandra.input.native.port";
     private static final String OUTPUT_THRIFT_PORT = "cassandra.output.thrift.port";
     private static final String INPUT_INITIAL_THRIFT_ADDRESS = "cassandra.input.thrift.address";
     private static final String OUTPUT_INITIAL_THRIFT_ADDRESS = "cassandra.output.thrift.address";
@@ -405,9 +406,19 @@ public class ConfigHelper
         return Integer.parseInt(conf.get(INPUT_THRIFT_PORT, "9160"));
     }
 
+    public static int getInputNativeTransportPort(Configuration conf)
+    {
+      return Integer.parseInt(conf.get(INPUT_NATIVE_TRANSPORT_PORT, "9042"));
+    }
+
     public static void setInputRpcPort(Configuration conf, String port)
     {
         conf.set(INPUT_THRIFT_PORT, port);
+    }
+
+    public static void setInputNativeTransportPort(Configuration conf, String port)
+    {
+      conf.set(INPUT_NATIVE_TRANSPORT_PORT, port);
     }
 
     public static String getInputInitialAddress(Configuration conf)
