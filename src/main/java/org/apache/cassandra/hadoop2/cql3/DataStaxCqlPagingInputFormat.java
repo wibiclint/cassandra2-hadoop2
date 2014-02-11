@@ -17,7 +17,10 @@
  */
 package org.apache.cassandra.hadoop2.cql3;
 
+import com.datastax.driver.core.Metadata;
 import com.datastax.driver.core.Row;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.Session;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import org.apache.cassandra.auth.IAuthenticator;
@@ -97,6 +100,22 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
     if (ConfigHelper.getInputPartitioner(conf) == null) {
       throw new UnsupportedOperationException("You must specify the Cassandra partitioner class.");
     }
+
+    // Make sure that the keyspace exists.
+    //LOG.info("Opening native transport connection with port " + ConfigHelper.getInputNativeTransportPort(conf));
+    Cluster cluster = Cluster
+        .builder()
+        .addContactPoint(ConfigHelper.getInputInitialAddress(conf))
+        .withPort(ConfigHelper.getInputNativeTransportPort(conf))
+        .build();
+    Metadata metadata = cluster.getMetadata();
+
+    String inputKeyspace = ConfigHelper.getInputKeyspace(conf);
+    if (null == metadata.getKeyspace(inputKeyspace)) {
+      throw new UnsupportedOperationException(String.format(
+          "Input keyspace '%s' does not exist.", inputKeyspace
+      ));
+    }
   }
 
   /** {@inheritDoc} */
@@ -113,6 +132,7 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
     LOG.info("-------------------- Getting input splits --------------------");
     Configuration conf = context.getConfiguration();
     validateConfiguration(conf);
+    LOG.info("Validated configuration.");
 
     // Get a list of all of the token ranges in the Cassandra cluster.
     List<TokenRange> masterRangeNodes = getRangeMap(conf);

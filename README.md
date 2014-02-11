@@ -20,3 +20,8 @@ To use:
 
 Enjoy!
 
+
+## Issues:
+
+- If you specify a keyspace that does not exist, it hangs.
+

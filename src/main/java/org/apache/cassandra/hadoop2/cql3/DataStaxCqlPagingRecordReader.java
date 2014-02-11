@@ -192,7 +192,7 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
     //allHostsToTry.add(coordinatorNode);
 
     for (String host: allHostsToTry) {
-      LOG.info(">>>>>>>>>>>>>> Trying to connect to host " + host + " with port " + port);
+      LOG.info("Trying to connect to host " + host + " with port " + port);
       try {
         Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
         //Cluster cluster = Cluster.builder().addContactPoint("localhost").withPort(9042).build();
@@ -251,7 +251,7 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
 
     // Select the columns that the user will be able to access in the Mapper.
     // If the user did not specify any columns, then select everything.
-    // TODO: Shall we include the partition key columns automatically?
+    // TODO: Include the partition keys!
     String userColumnsOrAll = (null == userRequestColumnsCommaSeparatedList)
         ? "*"
         : userRequestColumnsCommaSeparatedList;
@@ -272,6 +272,8 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
         partitionKeyList,
         userWhereOrBlank
     );
+
+    LOG.info(String.format("Using query string '%s'", query));
 
     // Bind the token limits to this query and execute!
     PreparedStatement preparedStatement = session.prepare(query);
@@ -309,7 +311,15 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
   public Text getCurrentKey() { return new Text("foo"); }
 
   /** {@inheritDoc} */
-  public Row getCurrentValue() { return mCurrentRow; }
+  public Row getCurrentValue() {
+    LOG.info("Returning row value.");
+    if (null == mCurrentRow) {
+      LOG.info("\tRow is null!");
+    } else {
+      LOG.info("\tRow is not null!");
+    }
+    return mCurrentRow;
+  }
 
   /** {@inheritDoc} */
   public float getProgress() {
@@ -327,6 +337,7 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
       mRowCount += 1;
       return true;
     } else {
+      mCurrentRow = null;
       return false;
     }
   }
