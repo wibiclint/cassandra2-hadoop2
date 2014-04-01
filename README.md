@@ -25,3 +25,13 @@ Enjoy!
 
 - If you specify a keyspace that does not exist, it hangs.
 
+## Testing
+
+Set up a multi-node Cassandra cluster locally using this Cassandra and Vagrant: https://github.com/dholbrook/vagrant-cassandra.
+
+## TODO items:
+
+- Populate table with different number of rows for different token ranges and check that we can
+  correctly estimate the number of rows per token range (for input split calculations).
+- Create data to insert into the table and validate that the Java driver agrees with getInputSplits
+  for what node will host that data.

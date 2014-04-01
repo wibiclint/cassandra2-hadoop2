@@ -129,8 +129,18 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
   /** {@inheritDoc} */
   @Override
   public List<InputSplit> getSplits(JobContext context) throws IOException {
-    LOG.info("-------------------- Getting input splits --------------------");
     Configuration conf = context.getConfiguration();
+    return getSplitsFromConf(conf);
+  }
+
+  /**
+   * Internal method that we can call with just a Hadoop Configuration - useful for unit testing.
+   *
+   * @param conf Hadoop configuration.
+   * @return A list of input splits for this configuration.
+   * @throws IOException
+   */
+  public List<InputSplit> getSplitsFromConf(Configuration conf) throws IOException {
     validateConfiguration(conf);
     LOG.info("Validated configuration.");
 
@@ -138,11 +148,11 @@ public class DataStaxCqlPagingInputFormat extends InputFormat<Text, Row> {
     List<TokenRange> masterRangeNodes = getRangeMap(conf);
     LOG.info("Got " + masterRangeNodes.size() + " master range nodes");
 
-    mKeyspace = ConfigHelper.getInputKeyspace(context.getConfiguration());
-    mColumnFamily = ConfigHelper.getInputColumnFamily(context.getConfiguration());
+    mKeyspace = ConfigHelper.getInputKeyspace(conf);
+    mColumnFamily = ConfigHelper.getInputColumnFamily(conf);
 
     // TODO: Can't we just get this from the Cassandra.Client?
-    mPartitioner = ConfigHelper.getInputPartitioner(context.getConfiguration());
+    mPartitioner = ConfigHelper.getInputPartitioner(conf);
 
     // For each individual token range, retrieve a set of input splits.  We need to do this in case
     // the number of rows in a given token range in our ring is greater than the user-specified

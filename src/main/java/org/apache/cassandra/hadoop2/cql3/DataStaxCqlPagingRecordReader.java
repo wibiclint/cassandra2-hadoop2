@@ -304,7 +304,7 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
 
   /** {@inheritDoc} */
   public void close() {
-    mSession.shutdown();
+    mSession.close();
   }
 
   /** {@inheritDoc} */
