@@ -4,9 +4,6 @@ import com.datastax.driver.core.*;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-import org.apache.cassandra.hadoop2.ConfigHelper;
-import org.apache.cassandra.hadoop2.cql3.CqlConfigHelper;
 import org.apache.hadoop.conf.Configuration;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,15 +86,13 @@ public class SubsplitCreator {
     // for system.local and system.peers to the same node.
     Cluster cluster = Cluster
         .builder()
-        .addContactPoint(ConfigHelper.getInputInitialAddress(conf))
-        .withPort(ConfigHelper.getInputNativeTransportPort(conf))
+        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
+        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
         .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
         .build();
     Session session = cluster.connect();
 
     Map<String, String> tokensToMasterNodes = Maps.newHashMap();
-
-    // TODO: Verify that the cluster uses Murmur3Partitioner?.
 
     // Get the set of tokens for the local host.
     updateTokenListForLocalHost(session, tokensToMasterNodes);
@@ -108,16 +103,6 @@ public class SubsplitCreator {
     cluster.close();
 
     return tokensToMasterNodes;
-  }
-
-  private Session createSession(Configuration conf) {
-    Cluster cluster = Cluster
-        .builder()
-        .addContactPoint(ConfigHelper.getInputInitialAddress(conf))
-        .withPort(ConfigHelper.getInputNativeTransportPort(conf))
-        .build();
-    Session session = cluster.connect();
-    return session;
   }
 
   private void updateTokenListForLocalHost(

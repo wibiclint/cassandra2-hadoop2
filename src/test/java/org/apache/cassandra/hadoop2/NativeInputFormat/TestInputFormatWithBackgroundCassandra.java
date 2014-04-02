@@ -25,8 +25,6 @@ import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Session;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-import org.apache.cassandra.hadoop.cql3.CqlConfigHelper;
-import org.apache.cassandra.hadoop2.ConfigHelper;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.InputSplit;
 import org.junit.Assert;
@@ -46,7 +44,6 @@ import java.util.Set;
  */
 public class TestInputFormatWithBackgroundCassandra {
   private static final Logger LOG = LoggerFactory.getLogger(TestInputFormatWithBackgroundCassandra.class);
-  //private static final String HOSTIP = "127.0.0.1";
   private static final String HOSTIP = "192.168.200.11";
   private static final int NATIVE_PORT = 9042;
 
@@ -55,27 +52,14 @@ public class TestInputFormatWithBackgroundCassandra {
 
   @Test
   public void testCreateSubsplits() throws IOException {
-    ////////////////////////////////////////////////////////////////////////////
     // Set Cassandra / Hadoop input options.
     Configuration conf = new Configuration();
-    ConfigHelper.setInputRpcPort(conf, "9160");
-    ConfigHelper.setInputNativeTransportPort(conf, Integer.toString(NATIVE_PORT));
-    ConfigHelper.setInputInitialAddress(conf, HOSTIP);
-    ConfigHelper.setInputColumnFamily(conf, KEYSPACE, TABLE);
-    ConfigHelper.setInputPartitioner(conf, "Murmur3Partitioner");
-
-    // The page size should be irrelevant here, since we are putting an entire document into a
-    // single "text" column (shouldn't be that many total rows).
-    CqlConfigHelper.setInputCQLPageRowSize(conf, "10000");
-
-    // Keep the total number of mappers tiny --- this is just a trivial example application!
-    //ConfigHelper.setInputSplitSize(conf, 16*1024*1024);
-    ConfigHelper.setInputSplitSize(conf, 1000);
+    NewCqlConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
+    NewCqlConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
 
     NewCqlInputFormat inputFormat = new NewCqlInputFormat();
-    final Cluster cluster = Cluster.builder().addContactPoint(HOSTIP).withPort(NATIVE_PORT).build();
-    final Session session = cluster.connect();
-    SubsplitCreator subsplitCreator = new SubsplitCreator(session, conf);
+
+    SubsplitCreator subsplitCreator = new SubsplitCreator(conf);
     Set<Subsplit> subsplits = subsplitCreator.createSubsplits();
 
     LOG.info(String.format("Got back %d subsplits", subsplits.size()));
@@ -86,108 +70,27 @@ public class TestInputFormatWithBackgroundCassandra {
     */
   }
 
-  @Test
-  public void testBreakUpSubsplit() throws IOException {
-    // Create a subsplit that is larger than what the user requested.
-    final long targetSize = 100L;
-    final int numEventualSplits = 4;
-    final long startToken = 0L;
-    final long endToken = startToken + numEventualSplits * targetSize;
-    final String HOST = "host";
-    Subsplit bigSubsplit = Subsplit.createFromHost(
-        Long.toString(startToken),
-        Long.toString(endToken),
-        HOST
-    );
-    // Keep the math easy -> assume one row per increment in the token space.
-    bigSubsplit.setEstimatedNumberOfRows(endToken - startToken);
-
-    Set<Subsplit> biggerSubsplits = Sets.newHashSet(bigSubsplit);
-
-    NewCqlInputFormat newCqlInputFormat = new NewCqlInputFormat();
-
-    Set<Subsplit> smallSubsplits = newCqlInputFormat.divideSubsplits(biggerSubsplits, targetSize);
-
-    for (Subsplit subsplit : smallSubsplits) {
-      LOG.debug(subsplit.toString());
-      Assert.assertEquals(
-          targetSize,
-          Long.parseLong(subsplit.getEndToken()) - Long.parseLong(subsplit.getStartToken())
-      );
-    }
-  }
 
   @Test
-  public void testCombineSubsplitsUnderTarget() throws IOException {
-    // Create a couple of subsplits that are smaller than the target.
-    final String HOST = "host";
+  public void testCombineSubsplits() throws IOException {
+    final String HOST0 = "host0";
+    final String HOST1 = "host1";
     List<Subsplit> smallSubsplits = Lists.newArrayList(
-        // Target is 60, getting to 50 is closer than getting to 100.
-        Subsplit.createFromHost("0", "1", HOST, 20),
-        Subsplit.createFromHost("2", "3", HOST, 30),
-        Subsplit.createFromHost("4", "5", HOST, 50)
+        Subsplit.createFromHost("0", "1", HOST0),
+        Subsplit.createFromHost("2", "3", HOST1),
+        Subsplit.createFromHost("4", "5", HOST0),
+        Subsplit.createFromHost("6", "7", HOST1)
     );
 
-    final long targetSize = 60L;
-
-    NewCqlInputFormat newCqlInputFormat = new NewCqlInputFormat();
-
-    Set<CqlInputSplit> inputSplits =
-        newCqlInputFormat.combineSubsplitsSameHost(smallSubsplits, targetSize);
-
-    for (CqlInputSplit inputSplit : inputSplits) {
-      LOG.debug(inputSplit.toString());
-      Assert.assertEquals(50L, inputSplit.getLength());
-    }
-  }
-
-  @Test
-  public void testCombineSubsplitsOverTarget() throws IOException {
-    // Create a couple of subsplits that are smaller than the target.
-    final String HOST = "host";
-    List<Subsplit> smallSubsplits = Lists.newArrayList(
-        // Target is 60, getting to 70 is closer than getting to 10.
-        Subsplit.createFromHost("0", "1", HOST, 10),
-        Subsplit.createFromHost("2", "3", HOST, 60),
-        Subsplit.createFromHost("4", "5", HOST, 70)
-    );
-
-    final long targetSize = 60L;
-
-    NewCqlInputFormat newCqlInputFormat = new NewCqlInputFormat();
-
-    Set<CqlInputSplit> inputSplits =
-        newCqlInputFormat.combineSubsplitsSameHost(smallSubsplits, targetSize);
-
-    for (CqlInputSplit inputSplit : inputSplits) {
-      LOG.debug(inputSplit.toString());
-      Assert.assertEquals(70L, inputSplit.getLength());
-    }
-  }
-
-  @Test
-  public void testCreateInputSplits() throws IOException {
-    ////////////////////////////////////////////////////////////////////////////
-    // Set Cassandra / Hadoop input options.
     Configuration conf = new Configuration();
-    ConfigHelper.setInputRpcPort(conf, "9160");
-    ConfigHelper.setInputNativeTransportPort(conf, Integer.toString(NATIVE_PORT));
-    ConfigHelper.setInputInitialAddress(conf, HOSTIP);
-    ConfigHelper.setInputColumnFamily(conf, KEYSPACE, TABLE);
-    ConfigHelper.setInputPartitioner(conf, "Murmur3Partitioner");
+    NewCqlConfigHelper.setInputTargetNumSplits(conf, 2);
 
-    // The page size should be irrelevant here, since we are putting an entire document into a
-    // single "text" column (shouldn't be that many total rows).
-    CqlConfigHelper.setInputCQLPageRowSize(conf, "10000");
+    SubsplitCombiner subsplitCombiner = new SubsplitCombiner(conf);
 
-    // Keep the total number of mappers tiny --- this is just a trivial example application!
-    //ConfigHelper.setInputSplitSize(conf, 16*1024*1024);
-    ConfigHelper.setInputSplitSize(conf, 1000);
+    List<CqlInputSplit> inputSplits = subsplitCombiner.combineSubsplits(smallSubsplits);
 
-    NewCqlInputFormat inputFormat = new NewCqlInputFormat();
-    final Cluster cluster = Cluster.builder().addContactPoint(HOSTIP).withPort(NATIVE_PORT).build();
-    final Session session = cluster.connect();
-
-    List<InputSplit> inputSplits = inputFormat.getSplitsFromConf(conf);
+    Assert.assertEquals(2, inputSplits.size());
   }
+
+  // TODO: Add check that hosts are grouped appropriately.
 }

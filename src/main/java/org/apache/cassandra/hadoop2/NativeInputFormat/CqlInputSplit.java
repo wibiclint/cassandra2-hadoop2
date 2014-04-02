@@ -31,47 +31,44 @@ import java.util.Set;
 
 public class CqlInputSplit extends InputSplit implements Writable {
   private List<TokenRange> tokenRanges;
-  private long estimatedNumberOfRows;
   private List<String> hosts;
+
+  // TODO: Is there a better answer here?
+  private static final long SPLIT_LENGTH = 1L;
 
   public static CqlInputSplit createFromSubplit(Subsplit subsplit) {
     return new CqlInputSplit(
         Lists.newArrayList(new TokenRange(subsplit.startToken, subsplit.endToken)),
-        subsplit.getEstimatedNumberOfRows(),
         Lists.newArrayList(subsplit.getHosts())
     );
   }
 
   public static CqlInputSplit createFromSubplits(Collection<Subsplit> subsplits) {
     List<TokenRange> tokenRanges = Lists.newArrayList();
-    long size = 0L;
     Set<String> hosts = Sets.newHashSet();
     for (Subsplit subsplit : subsplits) {
       tokenRanges.add(new TokenRange(subsplit.getStartToken(), subsplit.getEndToken()));
-      size += subsplit.getEstimatedNumberOfRows();
       hosts.addAll(subsplit.getHosts());
     }
-    return new CqlInputSplit(tokenRanges, size, Lists.newArrayList(hosts));
+    return new CqlInputSplit(tokenRanges, Lists.newArrayList(hosts));
   }
 
-  private CqlInputSplit(List<TokenRange> tokenRanges, long estimatedNumberOfRows, List<String> hosts) {
+  private CqlInputSplit(List<TokenRange> tokenRanges, List<String> hosts) {
     this.tokenRanges = tokenRanges;
-    this.estimatedNumberOfRows = estimatedNumberOfRows;
     this.hosts = hosts;
-  }
-
-  public long getLength() {
-    return estimatedNumberOfRows;
   }
 
   public String[] getLocations() {
     return hosts.toArray(new String[hosts.size()]);
   }
 
+  public long getLength() {
+    return SPLIT_LENGTH;
+  }
+
   // These three methods are for serializing and deserializing
   // KeyspaceSplits as needed by the Writable interface.
   public void write(DataOutput out) throws IOException {
-    out.writeLong(estimatedNumberOfRows);
     out.writeInt(tokenRanges.size());
     for (TokenRange tokenRange : tokenRanges) {
       out.writeUTF(tokenRange.getStartToken());
@@ -84,7 +81,6 @@ public class CqlInputSplit extends InputSplit implements Writable {
   }
 
   public void readFields(DataInput in) throws IOException {
-    estimatedNumberOfRows = in.readLong();
     int numTokenRanges = in.readInt();
     tokenRanges = Lists.newArrayList();
     for (int i = 0; i < numTokenRanges; i++) {
@@ -102,9 +98,8 @@ public class CqlInputSplit extends InputSplit implements Writable {
   @Override
   public String toString() {
     return String.format(
-        "CqlInputSplit(%s, %s, %s)",
+        "CqlInputSplit(%s, %s)",
         tokenRanges,
-        estimatedNumberOfRows,
         hosts
     );
   }

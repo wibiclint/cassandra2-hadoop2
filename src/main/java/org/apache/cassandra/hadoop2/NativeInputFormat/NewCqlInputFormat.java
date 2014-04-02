@@ -112,16 +112,13 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
     LOG.debug(String.format("Created %d subsplits from tokens", subsplitsFromTokens.size()));
 
     // Combine subsplits until we are close the user's requested total number of input splits.
-
-
+    final SubsplitCombiner subsplitCombiner = new SubsplitCombiner(conf);
 
     // Get a list of all of the token ranges in the Cassandra cluster.
-    /*
     List<InputSplit> inputSplitList = Lists.newArrayList();
-    inputSplitList.addAll(mergedInputSplits);
+    // Java is annoying here about casting a list.
+    inputSplitList.addAll(subsplitCombiner.combineSubsplits(subsplitsFromTokens));
     return inputSplitList;
-    */
-    return null;
   }
 
 }
