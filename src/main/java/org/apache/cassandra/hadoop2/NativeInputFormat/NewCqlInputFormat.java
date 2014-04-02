@@ -20,9 +20,9 @@ package org.apache.cassandra.hadoop2.NativeInputFormat;
 import com.datastax.driver.core.*;
 import com.datastax.driver.core.Cluster;
 import com.google.common.base.Joiner;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import org.apache.cassandra.dht.IPartitioner;
 import org.apache.cassandra.hadoop2.ConfigHelper;
 import org.apache.cassandra.hadoop2.cql3.DataStaxCqlPagingRecordReader;
@@ -33,7 +33,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.net.InetAddress;
 import java.util.*;
 
 /**
@@ -131,32 +130,91 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
   public List<InputSplit> getSplitsFromConf(Configuration conf) throws IOException {
     // Make sure that the keyspace exists.
     //LOG.info("Opening native transport connection with port " + ConfigHelper.getInputNativeTransportPort(conf));
-    Cluster cluster = Cluster
+    final Cluster cluster = Cluster
         .builder()
         .addContactPoint(ConfigHelper.getInputInitialAddress(conf))
         .withPort(ConfigHelper.getInputNativeTransportPort(conf))
         .build();
     validateConfiguration(cluster, conf);
 
-    Session session = cluster.newSession();
+    final Session session = cluster.newSession();
 
-    // Get a list of all of the subsplits.  A "subsplit" contains the following:
+    // Get a list of all of the subsplitsFromTokens.  A "subsplit" contains the following:
     // - A token range (corresponding to a virtual node in the C* cluster).
     // - A list of replica nodes for that token range
     // - An estimated row count for that token range
-    SubsplitCreator subsplitCreator = new SubsplitCreator(session, conf);
-    Set<Subsplit> subsplits = subsplitCreator.createSubsplits();
+    final SubsplitCreator subsplitCreator = new SubsplitCreator(session, conf);
+    final Set<Subsplit> subsplitsFromTokens = subsplitCreator.createSubsplits();
+    LOG.debug(String.format("Created %d subsplits from tokens", subsplitsFromTokens.size()));
 
     // For each range, estimate that number of rows in the table.
 
-    // Combine these ranges such that we end up with a collection of splits that are as close as
-    // possible to the length that the user requested.
-
+    // Combine or divide these ranges such that we end up with a collection of splits that are as
+    // close as possible to the length that the user requested.
+    final long splitSizeRequestedByUser = ConfigHelper.getInputSplitSize(conf);
+    final Set<Subsplit> dividedSubsplits = divideSubsplits(subsplitsFromTokens, splitSizeRequestedByUser);
+    final Set<CqlInputSplit> mergedInputSplits = combineSubsplits(dividedSubsplits, splitSizeRequestedByUser);
+    LOG.debug(String.format("Created %d input splits from subsplits", mergedInputSplits.size()));
 
     cluster.close();
 
     // Get a list of all of the token ranges in the Cassandra cluster.
-    return null;
+    List<InputSplit> inputSplitList = Lists.newArrayList();
+    inputSplitList.addAll(mergedInputSplits);
+    return inputSplitList;
+  }
+
+  /**
+   * Break up any split that is bigger than the target split size.
+   *
+   * @param originalSubsplits Splits before breaking up.
+   * @param maxSplitSize Split size above which we break them up.
+   * @return Subsplits that are near or below the target.
+   */
+  private Set<Subsplit> divideSubsplits(
+      Set<Subsplit> originalSubsplits,
+      long maxSplitSize
+  ) {
+    Set<Subsplit> dividedSplits = Sets.newHashSet();
+
+    for (Subsplit subsplit : originalSubsplits) {
+      long estimatedRowCount = subsplit.getEstimatedNumberOfRows();
+      // See how much bigger this is than the target.
+      long timesBiggerThanTarget = estimatedRowCount / maxSplitSize;
+
+      // Not much bigger, don't split it up.
+      if (timesBiggerThanTarget <= 1) {
+        dividedSplits.add(subsplit);
+        continue;
+      }
+
+      // Bigger, split it up.
+      Set<Subsplit> smallerSubsplits = breakupSubsplit(subsplit, timesBiggerThanTarget);
+      dividedSplits.addAll(smallerSubsplits);
+   }
+    return dividedSplits;
+  }
+
+  private Set<Subsplit> breakupSubsplit(Subsplit bigSubsplit, long timesBiggerThanTarget) {
+    final long minToken = Long.parseLong(bigSubsplit.getStartToken());
+    final long maxToken = Long.parseLong(bigSubsplit.getEndToken());
+    final long tokenRange = maxToken - minToken;
+    final long tokenRangePerSubsplit = tokenRange / timesBiggerThanTarget;
+
+    Set<Subsplit> smallerSubsplits = Sets.newHashSet();
+
+    long startToken = minToken;
+    do {
+      long endToken = Math.min(startToken + tokenRangePerSubsplit, maxToken);
+      smallerSubsplits.add(Subsplit.createFromHostSet(
+          Long.toString(startToken),
+          Long.toString(endToken),
+          bigSubsplit.getHosts()
+      ));
+      startToken += tokenRangePerSubsplit;
+    } while (startToken < maxToken);
+
+    return smallerSubsplits;
   }
 
   /**
@@ -181,5 +239,85 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
     return Joiner.on(",").join(columnList);
   }
 
+  /**
+   * Combine splits together to try to get them as close as possible to the target size.  Combine
+   * only split that share the same set of hosts.
+   *
+   * @param smallSubsplits
+   * @param targetSplitSize
+   * @return
+   */
+  private Set<CqlInputSplit> combineSubsplits(
+      Set<Subsplit> smallSubsplits,
+      long targetSplitSize) {
+
+    // Group by host.  Should be sufficient to just grab the first host alphabetically.
+    Map<String, Set<Subsplit>> subsplitsByHost = Maps.newHashMap();
+    for (Subsplit subsplit : smallSubsplits) {
+      String key = subsplit.getSortedHostListAsString();
+      if (!subsplitsByHost.containsKey(key)) {
+        subsplitsByHost.put(key, new HashSet<Subsplit>());
+      }
+      subsplitsByHost.get(key).add(subsplit);
+    }
+
+    // Bigger subsplits formed by combining smaller ones.
+    Set<CqlInputSplit> inputSplits = Sets.newHashSet();
+
+    // Combine splits that share hosts.
+    for (Map.Entry<String, Set<Subsplit>> hostsAndSubsplits : subsplitsByHost.entrySet()) {
+      inputSplits.addAll(
+          combineSubsplitsSameHost(hostsAndSubsplits.getValue(), targetSplitSize)
+      );
+    }
+
+    return inputSplits;
+  }
+
+  private Set<CqlInputSplit> combineSubsplitsSameHost(
+      Set<Subsplit> smallSubsplits,
+      long targetSplitSize) {
+    // This is by no means an optimal way to do this, but it should be good enough for most cases.
+    Set<CqlInputSplit> combinedInputSplits = Sets.newHashSet();
+    List<Subsplit> uncombinedSmallSubsplits = Lists.newArrayList(smallSubsplits);
+
+    // Keep popping uncombined splits off of the list of remaining splits and combining them
+    // until you exceed the threshold for input split size.  When that happens, start a new input
+    // split.
+
+    int subsplitIndex = 0;
+    while (subsplitIndex < uncombinedSmallSubsplits.size()) {
+      Set<Subsplit> subsplitsToCombine = Sets.newHashSet();
+      long totalSizeOfSubsplitsToCombine = 0L;
+
+      while (totalSizeOfSubsplitsToCombine < targetSplitSize) {
+        if (subsplitIndex >= uncombinedSmallSubsplits.size()) {
+          break;
+        }
+        Subsplit subsplitToAdd = uncombinedSmallSubsplits.get(subsplitIndex);
+        long additionalSize = subsplitToAdd.getEstimatedNumberOfRows();
+
+        long newSize = totalSizeOfSubsplitsToCombine + additionalSize;
+
+        if (newSize < totalSizeOfSubsplitsToCombine ||
+            newSizeCloserThanOldSize(newSize, totalSizeOfSubsplitsToCombine, targetSplitSize)) {
+          subsplitsToCombine.add(subsplitToAdd);
+          totalSizeOfSubsplitsToCombine = newSize;
+          subsplitIndex++;
+        }
+      }
+
+      assert(subsplitsToCombine.size() > 0);
+
+      // Now create the input split.
+      CqlInputSplit inputSplit = CqlInputSplit.createFromSubplits(subsplitsToCombine);
+      combinedInputSplits.add(inputSplit);
+    }
+    return combinedInputSplits;
+  }
+
+  private boolean newSizeCloserThanOldSize(long newSize, long oldSize, long targetSize) {
+    return Math.abs(newSize - targetSize) <= Math.abs(oldSize - targetSize);
+  }
 }
 

@@ -1,13 +1,18 @@
 package org.apache.cassandra.hadoop2.NativeInputFormat;
 
+import com.google.common.base.Joiner;
 import com.google.common.collect.Sets;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 
 /**
  * Similar to an input split.
  */
 public class Subsplit {
+  // TODO: Add separate field for actual owner of token, versus replica nodes?
   String startToken;
   String endToken;
   Set<String> hosts;
@@ -53,5 +58,19 @@ public class Subsplit {
 
   public void setEstimatedNumberOfRows(long estimatedNumberOfRows) {
     this.estimatedNumberOfRows = estimatedNumberOfRows;
+  }
+
+  public long getEstimatedNumberOfRows() {
+    return estimatedNumberOfRows;
+  }
+
+  public Set<String> getHosts() {
+    return hosts;
+  }
+
+  public String getSortedHostListAsString() {
+    List<String> hostList = new ArrayList(hosts);
+    Collections.sort(hostList);
+    return Joiner.on(",").join(hostList);
   }
 }

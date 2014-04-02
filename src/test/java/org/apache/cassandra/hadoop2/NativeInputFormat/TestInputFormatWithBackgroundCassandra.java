@@ -42,9 +42,10 @@ import java.util.List;
 import java.util.Set;
 
 /**
-
- * Test that the input format works, assuming you have a single-node Cassandra cluster running on
- * the local machine in the background.
+ * Test assuming that you have some kind of local C* server running (could be single-node local,
+ * could be multi-node on a Vagrant machine, etc.
+ *
+ * Use the include Python script to seed the table with data.
  */
 public class TestInputFormatWithBackgroundCassandra {
   private static final Logger LOG = LoggerFactory.getLogger(TestInputFormatWithBackgroundCassandra.class);
@@ -52,58 +53,8 @@ public class TestInputFormatWithBackgroundCassandra {
   private static final String HOSTIP = "192.168.200.11";
   private static final int NATIVE_PORT = 9042;
 
-  private static final String KEYSPACE = "keyspace_unit";
-  private static final String TABLE = "table_unit";
-
-  /**
-   * Put some data into the Cassandra cluster to get started.
-   */
-  @BeforeClass
-  public static void seedClusterWithData() {
-    final Cluster cluster = Cluster.builder().addContactPoint(HOSTIP).withPort(NATIVE_PORT).build();
-    final Session session = cluster.connect();
-    Assert.assertNotNull(session);
-
-    //final String deleteQuery = String.format("DROP KEYSPACE %s", KEYSPACE);
-    //session.execute(deleteQuery);
-
-    // Create a keyspace.
-    final String keyspaceQuery = String.format(
-        "CREATE KEYSPACE IF NOT EXISTS %s WITH REPLICATION = " +
-            " { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };", KEYSPACE);
-
-    session.execute(keyspaceQuery);
-    Assert.assertNotNull(cluster.getMetadata().getKeyspace(KEYSPACE));
-
-    // Create a table.
-    final String tableQuery = String.format(
-        "CREATE TABLE IF NOT EXISTS %s.%s (name text, age int, PRIMARY KEY (name));",
-        KEYSPACE,
-        TABLE
-    );
-    session.execute(tableQuery);
-    Assert.assertNotNull(cluster.getMetadata().getKeyspace(KEYSPACE).getTable(TABLE));
-
-    // Seed the table with some data.
-    List<ImmutablePair<String, Integer>> namesAndAges = Arrays.asList(
-        ImmutablePair.of("Clint", 36),
-        ImmutablePair.of("Jane", 35)
-    );
-
-    String insertQuery = String.format(
-        "INSERT INTO %s.%s (name, age) VALUES (?, ?);",
-        KEYSPACE,
-        TABLE
-    );
-    PreparedStatement insertStatement = session.prepare(insertQuery);
-
-    for (ImmutablePair<String, Integer> nameAndAge : namesAndAges) {
-      String name = nameAndAge.getLeft();
-      int age = nameAndAge.getRight();
-      session.execute(insertStatement.bind(name, age));
-    }
-    cluster.close();
-  }
+  private static final String KEYSPACE = "test_data";
+  private static final String TABLE = "users";
 
   @Test
   public void testCreateSubsplits() throws IOException {
@@ -111,15 +62,18 @@ public class TestInputFormatWithBackgroundCassandra {
     // Set Cassandra / Hadoop input options.
     Configuration conf = new Configuration();
     ConfigHelper.setInputRpcPort(conf, "9160");
-    ConfigHelper.setInputNativeTransportPort(conf, new Integer(NATIVE_PORT).toString());
+    ConfigHelper.setInputNativeTransportPort(conf, Integer.toString(NATIVE_PORT));
     ConfigHelper.setInputInitialAddress(conf, HOSTIP);
     ConfigHelper.setInputColumnFamily(conf, KEYSPACE, TABLE);
     ConfigHelper.setInputPartitioner(conf, "Murmur3Partitioner");
+
     // The page size should be irrelevant here, since we are putting an entire document into a
     // single "text" column (shouldn't be that many total rows).
     CqlConfigHelper.setInputCQLPageRowSize(conf, "10000");
+
     // Keep the total number of mappers tiny --- this is just a trivial example application!
-    ConfigHelper.setInputSplitSize(conf, 16*1024*1024);
+    //ConfigHelper.setInputSplitSize(conf, 16*1024*1024);
+    ConfigHelper.setInputSplitSize(conf, 1000);
 
     NewCqlInputFormat inputFormat = new NewCqlInputFormat();
     final Cluster cluster = Cluster.builder().addContactPoint(HOSTIP).withPort(NATIVE_PORT).build();
@@ -133,6 +87,31 @@ public class TestInputFormatWithBackgroundCassandra {
       LOG.info(subsplit.toString());
     }
     */
+  }
 
+  @Test
+  public void testCreateInputSplits() throws IOException {
+    ////////////////////////////////////////////////////////////////////////////
+    // Set Cassandra / Hadoop input options.
+    Configuration conf = new Configuration();
+    ConfigHelper.setInputRpcPort(conf, "9160");
+    ConfigHelper.setInputNativeTransportPort(conf, Integer.toString(NATIVE_PORT));
+    ConfigHelper.setInputInitialAddress(conf, HOSTIP);
+    ConfigHelper.setInputColumnFamily(conf, KEYSPACE, TABLE);
+    ConfigHelper.setInputPartitioner(conf, "Murmur3Partitioner");
+
+    // The page size should be irrelevant here, since we are putting an entire document into a
+    // single "text" column (shouldn't be that many total rows).
+    CqlConfigHelper.setInputCQLPageRowSize(conf, "10000");
+
+    // Keep the total number of mappers tiny --- this is just a trivial example application!
+    //ConfigHelper.setInputSplitSize(conf, 16*1024*1024);
+    ConfigHelper.setInputSplitSize(conf, 1000);
+
+    NewCqlInputFormat inputFormat = new NewCqlInputFormat();
+    final Cluster cluster = Cluster.builder().addContactPoint(HOSTIP).withPort(NATIVE_PORT).build();
+    final Session session = cluster.connect();
+
+    List<InputSplit> inputSplits = inputFormat.getSplitsFromConf(conf);
   }
 }
