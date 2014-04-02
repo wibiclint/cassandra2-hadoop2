@@ -21,24 +21,19 @@ public class SubsplitCreator {
   private static final Logger LOG = LoggerFactory.getLogger(SubsplitCreator.class);
 
   private final Configuration conf;
-  private final Session session;
 
   /** Fraction of subsplits to use for sampling estimated number of rows / subsplit. */
   private static final double SUBPLIT_SAMPLE_FRACTION = 0.1;
 
-  public SubsplitCreator(Session session, Configuration conf) {
+  public SubsplitCreator(Configuration conf) {
     this.conf = conf;
-    this.session = session;
   }
 
   public Set<Subsplit> createSubsplits() {
     // Create subsplits that initially contain a mapping from token ranges to primary hosts.
     Set<Subsplit> subsplits = createInitialSubsplits();
 
-    // Add replica nodes to the subsplits.
-
-    // Estimate row counts for the subsplits.
-    estimateRowCountsAndUpdateSubsplits(subsplits);
+    // TODO: Add replica nodes to the subsplits.
 
     return subsplits;
   }
@@ -166,119 +161,5 @@ public class SubsplitCreator {
       assert (!tokensToHosts.containsKey(token));
       tokensToHosts.put(token, hostName);
     }
-  }
-
-  /**
-   * Given a set of subsplits, update them with estimate row counts.
-   *
-   * Query a random subset of the subsplits to get an row counts, and assume all subplits are
-   * around the average.
-   *
-   * @param subsplits
-   */
-  private void estimateRowCountsAndUpdateSubsplits(Set<Subsplit> subsplits) {
-    // Create the query to use for getting row counts.
-    PreparedStatement rowCountStatement = buildRowCountStatement();
-
-    // Pick a random subset of the subsplits to use.
-    Set<Subsplit> sampleSet = getSubsplitSample(subsplits);
-
-    // Get the row counts for the subset of subsplits.
-    Set<Long> rowCounts = fetchSubsplitSampleRowCounts(sampleSet, rowCountStatement);
-
-    // Calculate the average row counts.
-    long averageRowCount = computeAverageRowCount(rowCounts);
-    LOG.debug(String.format("Average row count is %s", averageRowCount));
-
-    // Assign the average row count to all of the subsplits.
-    for (Subsplit subsplit : subsplits) {
-      subsplit.setEstimatedNumberOfRows(averageRowCount);
-    }
-
-  }
-
-  private PreparedStatement buildRowCountStatement() {
-    // TODO: Possibly share some code here with the RecordReader.
-    // Get the keyspace, column family (CQL "table"), and the columns that the user is interested in.
-    String table = ConfigHelper.getInputColumnFamily(conf);
-    String keyspace = ConfigHelper.getInputKeyspace(conf);
-
-    // The user can add "WHERE" clauses to the query (we shall also add a "WHERE" clause later to
-    // limit the partition key ranges such that we hit onl a single set of replica nodes).
-    String userDefinedWhereClauses = CqlConfigHelper.getInputWhereClauses(conf);
-
-    // Add additional WHERE clauses to filter the incoming data.
-    String userWhereOrBlank = (null == userDefinedWhereClauses)
-        ? ""
-        : " AND " + userDefinedWhereClauses;
-
-    // Get a comma-separated list of the partition keys.
-    String partitionKeyList = NewCqlInputFormat.getPartitionKeyCommaSeparatedList(
-        session,
-        keyspace,
-        table);
-
-    String query = String.format(
-        "SELECT COUNT(*) FROM \"%s\".\"%s\" WHERE token(%s) > ? AND token(%s) <= ? %s ALLOW FILTERING;",
-        keyspace,
-        table,
-        partitionKeyList,
-        partitionKeyList,
-        userWhereOrBlank
-    );
-
-    return session.prepare(query);
-  }
-
-  /**
-   * Create a random sample of the subsplits to use for estimating row counts.
-   *
-   * @param allSubsplits A set of all of the subsplits for the cluster.
-   * @return
-   */
-  private Set<Subsplit> getSubsplitSample(Set<Subsplit> allSubsplits) {
-    List<Subsplit> subsplitList = new ArrayList(allSubsplits);
-    Collections.shuffle(subsplitList);
-
-    int numSubsplitsToSample = (int)(subsplitList.size() * SUBPLIT_SAMPLE_FRACTION);
-
-    return new HashSet<Subsplit>(subsplitList.subList(0, numSubsplitsToSample));
-  }
-
-  private Set<Long> fetchSubsplitSampleRowCounts(
-      Set<Subsplit> subsplitSample,
-      PreparedStatement rowCountStatement) {
-    Set<ResultSetFuture> futures = Sets.newHashSet();
-
-    for (Subsplit subsplit : subsplitSample) {
-      futures.add(session.executeAsync(rowCountStatement.bind(
-          Long.parseLong(subsplit.getStartToken()),
-          Long.parseLong(subsplit.getEndToken())
-      )));
-    }
-
-    Set<Long> rowCounts = Sets.newHashSet();
-
-    // TODO: Optimize this code to more efficiently process the futures.
-    for (ResultSetFuture resultSetFuture : futures) {
-      ResultSet resultSet = resultSetFuture.getUninterruptibly();
-      List<Row> rows = resultSet.all();
-      // Should be just one result - the row count!
-      assert(rows.size() == 1);
-
-      long count = rows.get(0).getLong(0);
-      assert(count >= 0);
-
-      rowCounts.add(count);
-    }
-    return rowCounts;
-  }
-
-  private long computeAverageRowCount(Set<Long> rowCounts) {
-    long sum = 0;
-    for (Long count : rowCounts) {
-      sum += count;
-    }
-    return sum / rowCounts.size();
   }
 }
