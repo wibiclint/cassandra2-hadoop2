@@ -171,7 +171,7 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
    * @param maxSplitSize Split size above which we break them up.
    * @return Subsplits that are near or below the target.
    */
-  private Set<Subsplit> divideSubsplits(
+  Set<Subsplit> divideSubsplits(
       Set<Subsplit> originalSubsplits,
       long maxSplitSize
   ) {
@@ -274,12 +274,16 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
     return inputSplits;
   }
 
-  private Set<CqlInputSplit> combineSubsplitsSameHost(
-      Set<Subsplit> smallSubsplits,
+  Set<CqlInputSplit> combineSubsplitsSameHost(
+      Collection<Subsplit> smallSubsplits,
       long targetSplitSize) {
     // This is by no means an optimal way to do this, but it should be good enough for most cases.
     Set<CqlInputSplit> combinedInputSplits = Sets.newHashSet();
     List<Subsplit> uncombinedSmallSubsplits = Lists.newArrayList(smallSubsplits);
+
+    // TODO: Order the subsplits by token so we can combine consecutive token ranges where possible.
+
+    // TODO: May want to sort subsplits so that the behavior of this method will be deterministic.
 
     // Keep popping uncombined splits off of the list of remaining splits and combining them
     // until you exceed the threshold for input split size.  When that happens, start a new input
@@ -287,23 +291,38 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
 
     int subsplitIndex = 0;
     while (subsplitIndex < uncombinedSmallSubsplits.size()) {
+
+      // Start a new InputSplit.
       Set<Subsplit> subsplitsToCombine = Sets.newHashSet();
       long totalSizeOfSubsplitsToCombine = 0L;
 
-      while (totalSizeOfSubsplitsToCombine < targetSplitSize) {
+      // Go until we run out of subsplits, or until we reach the size threshold.
+      while (true) {
+
+        // No more data => can't add to this InputSplit anymore.
         if (subsplitIndex >= uncombinedSmallSubsplits.size()) {
           break;
         }
+
+        // Calculate the new size, *if we add this subsplit.*
         Subsplit subsplitToAdd = uncombinedSmallSubsplits.get(subsplitIndex);
         long additionalSize = subsplitToAdd.getEstimatedNumberOfRows();
-
         long newSize = totalSizeOfSubsplitsToCombine + additionalSize;
 
+        // Add the new subsplit if the new size is less than the threshold, or if we go over the
+        // threshold, but we are still closer to the target than we were with our previous total.
         if (newSize < totalSizeOfSubsplitsToCombine ||
             newSizeCloserThanOldSize(newSize, totalSizeOfSubsplitsToCombine, targetSplitSize)) {
           subsplitsToCombine.add(subsplitToAdd);
           totalSizeOfSubsplitsToCombine = newSize;
           subsplitIndex++;
+        }
+
+        // Break whether or not we decided to add the subsplit that took us over the target size
+        // to the current working InputSplit (if we did not add it to this InputSplit, then we'll
+        // pick it up the next time).
+        if (newSize >= targetSplitSize) {
+          break;
         }
       }
 

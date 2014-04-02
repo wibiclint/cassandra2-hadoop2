@@ -32,11 +32,38 @@ public class Subsplit {
     return new Subsplit(startToken, endToken, hosts);
   }
 
+  /**
+   * Used only in unit tests.
+   *
+   * @param startToken
+   * @param endToken
+   * @param host
+   * @param estimatedNumberOfRows
+   * @return
+   */
+  static Subsplit createFromHost(
+      String startToken,
+      String endToken,
+      String host,
+      long estimatedNumberOfRows) {
+    Set<String> hosts = Sets.newHashSet();
+    hosts.add(host);
+    return new Subsplit(startToken, endToken, hosts, estimatedNumberOfRows);
+  }
+
   private Subsplit(String startToken, String endToken, Set<String> hosts) {
     this.startToken = startToken;
     this.endToken = endToken;
     this.hosts = hosts;
     estimatedNumberOfRows = NO_ESTIMATE;
+  }
+
+  private Subsplit(
+      String startToken, String endToken, Set<String> hosts, long estimatedNumberOfRows) {
+    this.startToken = startToken;
+    this.endToken = endToken;
+    this.hosts = hosts;
+    this.estimatedNumberOfRows = estimatedNumberOfRows;
   }
 
   public String toString() {
