@@ -60,10 +60,28 @@ public abstract class BaseInputFormatTest {
    * Use a different native port to avoid conflict with any other local C* clusters (this native
    * port is also specified in the YAML file). /
    */
-  private static final int NATIVE_PORT = 9043;
-  //private static final int NATIVE_PORT = 9042;
+  private static int NATIVE_PORT;
 
   private static void startCluster() throws IOException {
+    String cassandraAddress = System.getProperty(
+        "org.apache.cassandra.hadoop2.NativeInputFormat.CASSANDRA_ADDRESS", null
+    );
+
+    if (null == cassandraAddress) {
+      startEmbeddedCluster();
+    } else {
+      connectToRunningCluster(cassandraAddress);
+    }
+  }
+
+  private static void connectToRunningCluster(String cassandraAddress) throws IOException {
+    NATIVE_PORT = 9042;
+    Cluster cluster = Cluster.builder().addContactPoint(cassandraAddress).build();
+    mSession = cluster.connect();
+  }
+
+  private static void startEmbeddedCluster() throws IOException {
+    NATIVE_PORT = 9043;
     try {
       // Use a custom YAML file that specifies different ports from normal for RPC and thrift.
       //File yamlFile = new File(getClass().getResource("/cassandra.yaml").getFile());
@@ -90,7 +108,6 @@ public abstract class BaseInputFormatTest {
       throw new IOException("Cannot start embedded C* service!");
     }
     Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").withPort(NATIVE_PORT).build();
-    //Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
     mSession = cluster.connect();
   }
 

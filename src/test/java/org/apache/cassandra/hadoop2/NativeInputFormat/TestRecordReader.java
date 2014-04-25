@@ -8,7 +8,6 @@ import java.io.IOException;
 import java.util.List;
 
 import com.datastax.driver.core.Row;
-import com.google.common.collect.Lists;
 import org.junit.Test;
 
 public class TestRecordReader extends BaseInputFormatTest {
