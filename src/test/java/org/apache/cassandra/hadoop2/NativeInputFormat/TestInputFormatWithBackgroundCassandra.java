@@ -22,6 +22,7 @@ package org.apache.cassandra.hadoop2.NativeInputFormat;
 
 
 import com.datastax.driver.core.Cluster;
+
 import com.datastax.driver.core.Session;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
@@ -35,6 +36,8 @@ import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.util.List;
 import java.util.Set;
+
+// THIS IS AN INTEGRATION TESTS AND REQUIRES A LIVE CASSANDRA CLUSTER TO CONNECT TO!
 
 /**
  * Test assuming that you have some kind of local C* server running (could be single-node local,
@@ -59,8 +62,10 @@ public class TestInputFormatWithBackgroundCassandra {
 
     NewCqlInputFormat inputFormat = new NewCqlInputFormat();
 
-    SubsplitCreator subsplitCreator = new SubsplitCreator(conf);
-    Set<Subsplit> subsplits = subsplitCreator.createSubsplits();
+    Session session = null;
+
+    SubsplitCreator subsplitCreator = new SubsplitCreator(conf, session);
+    List<Subsplit> subsplits = subsplitCreator.createSubsplits();
 
     LOG.info(String.format("Got back %d subsplits", subsplits.size()));
     /*

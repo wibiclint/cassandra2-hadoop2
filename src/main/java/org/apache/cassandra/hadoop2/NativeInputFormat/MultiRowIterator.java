@@ -14,6 +14,8 @@ import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.PeekingIterator;
 import org.apache.commons.lang3.tuple.Pair;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Iterator that operates over multiple Cassandra Row Iterators at once.
@@ -30,6 +32,8 @@ import org.apache.commons.lang3.tuple.Pair;
  * The primary key must be the same for all of the rows.
  */
 public class MultiRowIterator implements Iterator<List<Row>> {
+  private static final Logger LOG = LoggerFactory.getLogger(MultiRowIterator.class);
+
   private final PeekingIterator<Row> mRowIterator;
   private final List<Pair<String, DataType>> mColumnsToCompare;
   private final RowComparator mRowComparator;
@@ -68,12 +72,15 @@ public class MultiRowIterator implements Iterator<List<Row>> {
     // Get the first row in our iterator.
     Row firstRow = mRowIterator.next();
 
+    LOG.debug("First row = " + firstRow);
+
     List<Row> rowsToReturnTogether = Lists.newArrayList(firstRow);
 
     // Continue popping rows off of the iterator as long as all of the columns that we want to
     // compare are the same between this row and the next.
     while (mRowIterator.hasNext() &&
         mRowComparator.compare(firstRow, mRowIterator.peek()) == 0) {
+      LOG.debug("Next row = " + mRowIterator.peek());
       rowsToReturnTogether.add(mRowIterator.next());
     }
 
