@@ -208,7 +208,6 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     // TODO: Check that these don't have any quotes in them?
     final String keyspace = querySpec.getKeyspace();
     final String table = querySpec.getTable();
-    final String userDefinedColumnCsv = querySpec.getColumnCsv();
     final String userDefinedWhereClauses = querySpec.getWhereClauses();
 
     // Construct a new where clause that include the token range.
@@ -223,9 +222,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       whereClause = "WHERE " + whereTokenClause;
     }
 
-    // Add the token for the partition key to the SELECT statement.
-    // TODO: Add clustering columns that we want to compare.
-    final String columnCsv = COMMA_JOINER.join(mTokenColumn, userDefinedColumnCsv);
+    final String columnCsv = getColumnCsvForQuery(querySpec);
 
     return String.format(
         "SELECT %s from \"%s\".\"%s\" %s ALLOW FILTERING",
@@ -234,6 +231,34 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
         table,
         whereClause
     );
+  }
+
+  private String getColumnCsvForQuery(CqlQuerySpec querySpec) {
+    final String userDefinedColumnCsv;
+
+    // If the user asked for "*", then get every column in the table.
+    if (querySpec.getColumnCsv().equals("*")) {
+      TableMetadata tableMetadata = mSession
+          .getCluster()
+          .getMetadata()
+          .getKeyspace(querySpec.getKeyspace())
+          .getTable(querySpec.getTable());
+      List<String> columns = Lists.newArrayList();
+      for (ColumnMetadata columnMetadata : tableMetadata.getColumns()) {
+        columns.add(columnMetadata.getName());
+      }
+      userDefinedColumnCsv = COMMA_JOINER.join(columns);
+    } else {
+      userDefinedColumnCsv = querySpec.getColumnCsv();
+    }
+
+    // TODO: Add clustering columns that we want to compare.
+
+    // Add the token for the partition key to the SELECT statement.
+    final String columnCsv = COMMA_JOINER.join(mTokenColumn, userDefinedColumnCsv);
+
+    return columnCsv;
+
   }
 
   // package protected for testing...
@@ -327,7 +352,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     List<ResultSetFuture> futures = Lists.newArrayList();
     for (PreparedStatement preparedStatement : mCqlQueries) {
       futures.add(mSession.executeAsync(
-        preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken))
+          preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken))
       ));
     }
 
