@@ -21,7 +21,9 @@ import java.io.IOException;
 import java.util.List;
 import java.util.Set;
 
+import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Row;
+import com.datastax.driver.core.Session;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
@@ -68,10 +70,25 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
    * Validate that all of necessary configuration settings are present.
    *
    * @param conf Hadoop configuration.
+   * @param session Open C* session.
+   * @throws IOException if the configuration is invalid.
    */
-  protected void validateConfiguration(Configuration conf) {
-    Preconditions.checkNotNull(NewCqlConfigHelper.getInputCqlQuery(conf));
-    // TODO: Check keyspace exists before getting input splits?
+  protected void validateConfiguration(Configuration conf, Session session) throws IOException {
+    List<CqlQuerySpec> queries = NewCqlConfigHelper.getInputCqlQueries(conf);
+
+    if (0 == queries.size()) {
+      throw new IOException("Must specify a query!");
+    }
+
+    // Check that all keyspaces and tables exist.
+    CqlRecordReader.checkKeyspacesAndTablesExist(session, queries);
+
+    // Check that all tables have the same partition keys.
+    CqlRecordReader.checkParitionKeysAreIdentical(session, queries);
+
+    // Check that all queried columns exist.
+
+    // Check that all specified clustering columns are the same across tables.
   }
 
   /**
@@ -102,12 +119,22 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
    * @throws java.io.IOException
    */
   public List<InputSplit> getSplitsFromConf(Configuration conf) throws IOException {
-    validateConfiguration(conf);
+    // Create a session with a custom load-balancing policy that will ensure that we send queries
+    // for system.local and system.peers to the same node.
+    Cluster cluster = Cluster
+        .builder()
+        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
+        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
+        .build();
+    Session session = cluster.connect();
+
+    validateConfiguration(conf, session);
 
     // Get a list of all of the subsplits.  A "subsplit" contains the following:
     // - A token range (corresponding to a virtual node in the C* cluster)
     // - A list of replica nodes for that token range
-    final SubsplitCreator subsplitCreator = new SubsplitCreator(conf);
+    final SubsplitCreator subsplitCreator = new SubsplitCreator(conf, session);
     final List<Subsplit> subsplitsFromTokens = subsplitCreator.createSubsplits();
     LOG.debug(String.format("Created %d subsplits from tokens", subsplitsFromTokens.size()));
 
@@ -122,6 +149,7 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
 
     // Java is annoying here about casting a list.
     inputSplitList.addAll(subsplitCombiner.combineSubsplits(subsplitsFromTokens));
+    cluster.close();
     return inputSplitList;
   }
 

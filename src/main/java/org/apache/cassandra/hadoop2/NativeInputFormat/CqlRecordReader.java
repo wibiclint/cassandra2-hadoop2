@@ -22,21 +22,21 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ColumnMetadata;
+import com.datastax.driver.core.DataType;
+import com.datastax.driver.core.Metadata;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.ResultSetFuture;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.datastax.driver.core.TableMetadata;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
-import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
-import com.google.common.collect.PeekingIterator;
-import com.google.common.collect.Sets;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.InputSplit;
@@ -120,7 +120,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
    * This iterator combines all of the rows for all of our separate queries.  We need to reassign
    * this iterator every time we need to fetch a new token range.
    */
-  private MultiRowIterator mMultiRowIterator;
+  private MultiRowIterator mMultiRowIterator = null;
 
   /** Current set of fresh rows, ready to serve!. */
   private List<Row> mCurrentRows;
@@ -133,6 +133,12 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
   /** Count of total number of rows returned so far.  Used for progress reporting. */
   private int mRowCount;
+
+  private static final Joiner COMMA_JOINER = Joiner.on(", ");
+
+  private String mTokenColumn;
+
+  private Configuration mConf;
 
   /** {@inheritDoc} */
   public CqlRecordReader() { super(); }
@@ -149,25 +155,28 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       throw new IOException("Illegal input split format " + CqlInputSplit.class);
     }
 
-    Configuration conf = context.getConfiguration();
-
-    mSession = openSession(conf);
+    mConf = context.getConfiguration();
+    mSession = openSession(mConf);
 
     // Extract the CQL query from the Configuration and make a prepared statement with
     // placeholders (?s) for the token range.
-    initializeCqlStatements(conf);
+    initializeCqlStatements(mConf);
 
     // Create an iterator to go through all of the token ranges.
     mTokenRangeIterator = mInputSplit.getTokenRangeIterator();
     assert(mTokenRangeIterator.hasNext());
 
     mRowCount = 0;
-
     queryNextTokenRange();
+  }
 
+  private String getTokenColumn(Configuration conf) {
+    List<CqlQuerySpec> cqlQuerySpecs =
+        NewCqlConfigHelper.getInputCqlQueries(conf);
 
-    // TODO: Fetch the first row?
-    //this.nextKeyValue();
+    // Figure out the columns in the partition key.
+    List<String> partitioningKeys = getPartitioningKeysForQuery(cqlQuerySpecs.get(0));
+    return String.format("token(%s)", COMMA_JOINER.join(partitioningKeys));
   }
 
   /**
@@ -178,44 +187,51 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
    * Add WHERE clauses for the token range, and make sure to select the token of the primary key.
    */
   private void initializeCqlStatements(Configuration conf) {
+    mTokenColumn = getTokenColumn(conf);
     // Create a CQL statement that we can use to fetch data per the user's specification.
     mCqlQueries = Lists.newArrayList();
 
-    List<NewCqlConfigHelper.CqlQuerySpec> cqlQuerySpecs =
-        NewCqlConfigHelper.getInputCqlQueries(conf);
+    List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
 
-    // Figure out the columns in the partition key.
-    List<String> partitioningKeys = getPartitioningKeys(cqlQuerySpecs);
-
-    // Make sure to fetch the token(partition key).
-
-    // Add a WHERE clause for the token(partition key).
-
-    // TODO: Fetch any other columns to compare (beyond just those in the partition key).
-    // (For now, just compare the partition key.)
-
-    //String tokenWhereClause = ' WHERE '
-
-  }
-
-  private List<String> getPartitioningKeys(Collection<NewCqlConfigHelper.CqlQuerySpec> queries) {
-    // Get the partition key columns from table metadata for each table.
-    // These lists should always be the same.
-    List<String> initialPartitionKeyNames = null;
-    for (NewCqlConfigHelper.CqlQuerySpec query : queries) {
-      if (null == initialPartitionKeyNames) {
-        initialPartitionKeyNames = getPartitioningKeysForQuery(query);
-        continue
-      }
-      // Make sure that this query's table has the same partitioning key as the others!
-      List<String> partitionKeyNames = getPartitioningKeysForQuery(query);
-      if (partitionKeyNames.size() != initialPartitionKeyNames.size()) {
-        throw new IOException("Partition keys do not all have the same size!");
-      }
+    for (CqlQuerySpec querySpec : querySpecs) {
+      String queryString = createCqlQuery(querySpec);
+      mCqlQueries.add(mSession.prepare(queryString));
     }
   }
 
-  private List<String> getPartitioningKeysForQuery(NewCqlConfigHelper.CqlQuerySpec query) {
+  private String createCqlQuery(CqlQuerySpec querySpec) {
+    // TODO: Check that these don't have any quotes in them?
+    final String keyspace = querySpec.getKeyspace();
+    final String table = querySpec.getTable();
+    final String userDefinedColumnCsv = querySpec.getColumnCsv();
+    final String userDefinedWhereClauses = querySpec.getWhereClauses();
+
+    // Construct a new where clause that include the token range.
+    String whereTokenClause = String.format(
+        "WHERE %s >= ? AND WHERE %s <= ?",
+        mTokenColumn,
+        mTokenColumn);
+    final String whereClause;
+    if (userDefinedWhereClauses.contains("WHERE")) {
+      whereClause = whereTokenClause + " AND " + userDefinedWhereClauses;
+    } else {
+      whereClause = whereTokenClause;
+    }
+
+    // Add the token for the partition key to the SELECT statement.
+    // TODO: Add clustering columns that we want to compare.
+    final String columnCsv = COMMA_JOINER.join(mTokenColumn, userDefinedColumnCsv);
+
+    return String.format(
+        "SELECT %s from \"%s\".\"%s\" %s ALLOW FILTERING",
+        columnCsv,
+        keyspace,
+        table,
+        whereClause
+    );
+  }
+
+  private List<String> getPartitioningKeysForQuery(CqlQuerySpec query) {
     String keyspace = query.getKeyspace();
     String tableName = query.getTable();
 
@@ -233,7 +249,29 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     return partitionKeyNames;
   }
 
+  private List<Pair<String, DataType>> getColumnsToCheckAndTypes(Configuration conf) {
+    // TODO: For now this is just the partition key, but it could later include other columns.
+    List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
+    CqlQuerySpec query = querySpecs.get(0);
 
+    String keyspace = query.getKeyspace();
+    String tableName = query.getTable();
+
+    // Get the metadata for this table.
+    TableMetadata tableMetadata = mSession
+        .getCluster()
+        .getMetadata()
+        .getKeyspace(keyspace)
+        .getTable(tableName);
+
+    List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList();
+    for (ColumnMetadata columnMetadata : tableMetadata.getPartitionKey()) {
+      String name = columnMetadata.getName();
+      DataType dataType = columnMetadata.getType();
+      columnsToCheck.add(Pair.of(name, dataType));
+    }
+    return columnsToCheck;
+  }
 
   /**
    * Execute all of our queries over the next token range in our list of token ranges for this
@@ -244,18 +282,20 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
    */
   private void queryNextTokenRange() {
     Preconditions.checkArgument(mTokenRangeIterator.hasNext());
+    Preconditions.checkArgument(null == mMultiRowIterator || !mMultiRowIterator.hasNext());
 
     TokenRange nextTokenRange = mTokenRangeIterator.next();
 
     // Actually execute the query to create the row iterator!
-    ResultSet resultSet = composeAndExecuteQuery(
-        mSession,
+    List<ResultSet> resultSets = executeQueries(
         nextTokenRange.getStartToken(),
         nextTokenRange.getEndToken()
     );
 
-    mCurrentRows = null;
-    mRowIterator = resultSet.iterator();
+    mMultiRowIterator = new MultiRowIterator(
+        resultSets,
+        getColumnsToCheckAndTypes(mConf)
+    );
   }
 
   public Session openSession(Configuration conf) {
@@ -271,71 +311,21 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     return cluster.connect();
   }
 
+  private List<ResultSet> executeQueries(String startToken, String endToken) {
+    List<ResultSetFuture> futures = Lists.newArrayList();
+    for (PreparedStatement preparedStatement : mCqlQueries) {
+      futures.add(mSession.executeAsync(
+        preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken))
+      ));
+    }
 
-  /**
-   * Create a Cassandra CQL query for the specified Hadoop job and execute it, returning a result set.
-   *
-   * The method will extract a list of the partition key columns from the `TableMetadata` for the
-   * table being queries and use those columns, along with the start and end tokens, to limit the
-   * query such that it touches only rows on a single replica node for this session.
-   *
-   * @param session Open session, most likely to one of the replica nodes for this split.
-   * @param keyspace The C* keyspace.
-   * @param table The C* table (column family) to query.
-   * @param userRequestColumnsCommaSeparatedList The list of columns that the user would like to get
-   *                                             back (can be null, which means fetch all).
-   * @param userDefinedWhereClauses The list of filtering WHERE clauses that the users has specified
-   *                                (Can be null).
-   * @param startToken The partition key start token for this split.
-   * @param endToken The partition key end token for this split.
-   * @return The ResultSet containing the results of the query.
-   */
-  private ResultSet composeAndExecuteQuery(
-      Session session,
-      String keyspace,
-      String table,
-      String userRequestColumnsCommaSeparatedList,
-      String userDefinedWhereClauses,
-      String startToken,
-      String endToken
-  ) {
+    // Wait until all of the futures are done.
+    List<ResultSet> results = new ArrayList<ResultSet>();
 
-    session.execute(String.format("USE \"%s\";", keyspace));
-
-    // The query we shall construct has the following components:
-    // - The columns that the user has requested.
-    // - Any "WHERE" clauses that the user has added.
-    // - An additional "WHERE" clause that limits the partition key range to only this input split.
-
-    // Select the columns that the user will be able to access in the Mapper.
-    // If the user did not specify any columns, then select everything.
-    // TODO: Include the partition keys!
-    String userColumnsOrAll = (null == userRequestColumnsCommaSeparatedList)
-        ? "*"
-        : userRequestColumnsCommaSeparatedList;
-
-    // Add additional WHERE clauses to filter the incoming data.
-    String userWhereOrBlank = (null == userDefinedWhereClauses)
-        ? ""
-        : " AND " + userDefinedWhereClauses;
-
-    // Get a comma-separated list of the partition keys.
-    String partitionKeyList = getPartitionKeyCommaSeparatedList(session, keyspace, table);
-
-    String query = String.format(
-        "SELECT %s FROM \"%s\" WHERE token(%s) > ? AND token(%s) <= ? %s ALLOW FILTERING;",
-        userColumnsOrAll,
-        table,
-        partitionKeyList,
-        partitionKeyList,
-        userWhereOrBlank
-    );
-
-    LOG.info(String.format("Using query string '%s'", query));
-
-    // Bind the token limits to this query and execute!
-    PreparedStatement preparedStatement = session.prepare(query);
-    return session.execute(preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken)));
+    for (ResultSetFuture resultSetFuture: futures) {
+      results.add(resultSetFuture.getUninterruptibly());
+    }
+    return results;
   }
 
   /**
@@ -365,6 +355,8 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     mSession.close();
   }
 
+  // TODO: Make this return the partition key instead?  Or all of the columns to compare?
+  // (Could use a sorted map...)
   /** {@inheritDoc} */
   public Text getCurrentKey() { return new Text("foo"); }
 
@@ -381,6 +373,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
   /** {@inheritDoc} */
   public float getProgress() {
+    // TODO: Rewrite this...
     if (null == mCurrentRows) {
       return 0.0f;
     } else {
@@ -390,8 +383,8 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
   /** {@inheritDoc} */
   public boolean nextKeyValue() throws IOException {
-    if (mRowIterator.hasNext()) {
-      mCurrentRows = mRowIterator.next();
+    if (mMultiRowIterator.hasNext()) {
+      mCurrentRows = mMultiRowIterator.next();
       mRowCount += 1;
       return true;
     } else {
@@ -399,4 +392,69 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       return false;
     }
   }
+
+  // -----------------------------------------------------------------------------------------------
+  // Methods for checking that the specified queries are valid.
+  static void checkKeyspacesAndTablesExist(
+      Session session, Collection<CqlQuerySpec> queries) throws IOException {
+    Metadata metadata = session.getCluster().getMetadata();
+    for (CqlQuerySpec query : queries) {
+      String keyspace = query.getKeyspace();
+      if (null == metadata.getKeyspace(keyspace)) {
+        throw new IOException("Cannot find keyspace " + keyspace);
+      }
+      String table = query.getTable();
+      if (null == metadata.getKeyspace(keyspace).getTable(table)) {
+        throw new IOException("Cannot find table " + table);
+      }
+    }
+  }
+
+  static void checkParitionKeysAreIdentical(
+      Session session, Collection<CqlQuerySpec> queries) throws IOException {
+    List<ColumnMetadata> firstPartitionKey = null;
+    for (CqlQuerySpec query : queries) {
+      if (null == firstPartitionKey) {
+        firstPartitionKey = getPartitionKeysForQuery(session, query);
+        continue;
+      }
+      List<ColumnMetadata> partitionKey = getPartitionKeysForQuery(session, query);
+      compareColumnMetadataLists(firstPartitionKey, partitionKey);
+    }
+  }
+
+  static void compareColumnMetadataLists(
+      List<ColumnMetadata> listA,
+      List<ColumnMetadata> listB
+  ) throws IOException {
+    if (listA.size() != listB.size()) {
+      // TODO: Better error message.
+      throw new IOException("Number of columns to compare are not equal for all tables.");
+    }
+
+    for (int i = 0; i < listA.size(); i++) {
+      ColumnMetadata columnA = listA.get(i);
+      ColumnMetadata columnB = listB.get(i);
+
+      if (!(columnA.getName().equals(columnB.getName()))) {
+        throw new IOException("Columns with different names.");
+      }
+
+      if (columnA.getType() != columnB.getType()) {
+        throw new IOException("Columns with different types.");
+      }
+    }
+  }
+
+  private static List<ColumnMetadata> getPartitionKeysForQuery(
+      Session session, CqlQuerySpec query) {
+    return session
+        .getCluster()
+        .getMetadata()
+        .getKeyspace(query.getKeyspace())
+        .getTable(query.getTable())
+        .getPartitionKey();
+  }
+
+
 }

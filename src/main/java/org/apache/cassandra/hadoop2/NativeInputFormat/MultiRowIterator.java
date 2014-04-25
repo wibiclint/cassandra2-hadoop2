@@ -4,6 +4,7 @@ import java.util.Comparator;
 import java.util.Iterator;
 import java.util.List;
 
+import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.exceptions.InvalidTypeException;
@@ -12,6 +13,7 @@ import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
 import com.google.common.collect.PeekingIterator;
+import org.apache.commons.lang3.tuple.Pair;
 
 /**
  * Iterator that operates over multiple Cassandra Row Iterators at once.
@@ -29,8 +31,7 @@ import com.google.common.collect.PeekingIterator;
  */
 public class MultiRowIterator implements Iterator<List<Row>> {
   private final PeekingIterator<Row> mRowIterator;
-  private final List<String> mPartitionKey;
-  private final List<String> mClusteringColumns;
+  private final List<Pair<String, DataType>> mColumnsToCompare;
   private final RowComparator mRowComparator;
 
   /**
@@ -38,26 +39,23 @@ public class MultiRowIterator implements Iterator<List<Row>> {
    *
    * @param resultSets A list of result sets.  We will return rows from this iterator in the same
    * order as the result sets.
-   * @param partitionKey A list of columns that for the partition key (must be same for all tables).
-   * @param clusteringColumns A list of additional clustering columns to use for grouping rows
-   * (must be same for all tables).
+   * @param columnsToCompare A list of columns, in order, for comparing and sorting rows.
    */
   public MultiRowIterator(
       List<ResultSet> resultSets,
       // TODO: Maybe use ColumnMetadata here instead of String?
       // Would allow storing "type" as well as name...
-      List<String> partitionKey,
-      List<String> clusteringColumns) {
+      List<Pair<String, DataType>> columnsToCompare) {
     List<PeekingIterator<Row>> rowIterators = Lists.newArrayList();
     for (ResultSet resultSet : resultSets) {
       rowIterators.add(Iterators.peekingIterator(resultSet.iterator()));
     }
 
-    mRowComparator = new RowComparator(partitionKey, clusteringColumns);
+    mColumnsToCompare = columnsToCompare;
+
+    mRowComparator = new RowComparator();
     mRowIterator = Iterators.peekingIterator(Iterators.mergeSorted(rowIterators, mRowComparator));
 
-    mPartitionKey = partitionKey;
-    mClusteringColumns = clusteringColumns;
   }
 
   /** {@inheritDoc} */
@@ -94,29 +92,59 @@ public class MultiRowIterator implements Iterator<List<Row>> {
    * must be from the same table.  The Rows are first compared by their partion key token, and then
    * by the entity ID components they contain.
    */
-  private static final class RowComparator implements Comparator<Row> {
-    private final String mTokenColumn;
-    private final List<String> mClusteringColumns;
-    private static final Joiner COMMA_JOINER = Joiner.on(", ");
-
-    private RowComparator(List<String> partitionKey, List<String> clusteringColumns) {
-      mTokenColumn = String.format("token(%s)", COMMA_JOINER.join(partitionKey));
-      mClusteringColumns = clusteringColumns;
-    }
+  private final class RowComparator implements Comparator<Row> {
 
     /** {@inheritDoc} */
     @Override
     public int compare(Row o1, Row o2) {
-      ComparisonChain chain =  ComparisonChain.start()
-          .compare(o1.getLong(mTokenColumn), o2.getLong(mTokenColumn));
-      for (String columnName : mClusteringColumns) {
-        // TODO: Add more data types here...
-        try {
-          String s1 = o1.getString(columnName);
-          String s2 = o2.getString(columnName);
-          chain = chain.compare(s1, s2);
-        } catch (InvalidTypeException ite) {
-          // Do nothing...
+      ComparisonChain chain =  ComparisonChain.start();
+      for (Pair<String, DataType> columnAndType : mColumnsToCompare) {
+        String columnName = columnAndType.getLeft();
+        DataType dataType = columnAndType.getRight();
+
+        switch (dataType.getName()) {
+          case BOOLEAN:
+            chain = chain.compare(
+                Boolean.toString(o1.getBool(columnName)),
+                Boolean.toString(o2.getBool(columnName)));
+            break;
+          case INT:
+            chain = chain.compare(o1.getInt(columnName), o2.getInt(columnName));
+            break;
+          case BIGINT:
+          case COUNTER:
+            chain = chain.compare(o1.getLong(columnName), o2.getLong(columnName));
+            break;
+          case DOUBLE:
+            chain = chain.compare(o1.getDouble(columnName), o2.getDouble(columnName));
+            break;
+          case FLOAT:
+            chain = chain.compare(o1.getFloat(columnName), o2.getFloat(columnName));
+            break;
+          case BLOB:
+            chain = chain.compare(o1.getBytes(columnName), o2.getBytes(columnName));
+            break;
+          case VARCHAR:
+          case TEXT:
+          case ASCII:
+            chain = chain.compare(o1.getString(columnName), o2.getString(columnName));
+            break;
+          case VARINT:
+            chain = chain.compare(o1.getVarint(columnName), o2.getVarint(columnName));
+            break;
+          case DECIMAL:
+            chain = chain.compare(o1.getDecimal(columnName), o2.getDecimal(columnName));
+            break;
+          case UUID:
+          case TIMEUUID:
+            chain = chain.compare(o1.getUUID(columnName), o2.getUUID(columnName));
+            break;
+          case INET:
+            chain = chain.compare(
+                o1.getInet(columnName).toString(), o2.getInet(columnName).toString());
+            break;
+          default:
+            throw new UnsupportedOperationException("Cannot sort by " + dataType.getName() + "!");
         }
       }
       return chain.result();

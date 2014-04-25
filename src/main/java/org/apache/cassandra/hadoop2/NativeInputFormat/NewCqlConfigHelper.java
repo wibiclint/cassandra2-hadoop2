@@ -10,29 +10,6 @@ public class NewCqlConfigHelper {
 
   // TODO: Figure out if the table name should include a keyspace.
 
-  public static class CqlQuerySpec {
-    private final String mKeyspace;
-    private final String mTable;
-    private final String mColumnsCsv;
-    private final String mWhereClauses;
-
-    public CqlQuerySpec(String keyspace, String table, String columnsCsv, String whereClauses) {
-      mKeyspace = keyspace;
-      mTable = table;
-      mColumnsCsv = columnsCsv;
-      mWhereClauses = whereClauses;
-    }
-
-    public String getTable() {
-      return mTable;
-    }
-
-    public String getKeyspace() {
-      return mKeyspace;
-    }
-
-  }
-
   // TODO: Put all of the query information together into an object.
   // Try using the Hadoop DefaultStringifier to serialize these objects.
 

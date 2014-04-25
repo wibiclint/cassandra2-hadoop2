@@ -25,12 +25,21 @@ public class SubsplitCreator {
 
   private final Configuration mConf;
 
+  private final Session mSession;
+
   /**
    * Constructor for SubsplitCreator.
    * @param conf Hadoop configuration containing information about the Cassandra cluster.
    */
-  public SubsplitCreator(Configuration conf) {
+  public SubsplitCreator(Configuration conf, Session session) {
     this.mConf = conf;
+    mSession = session;
+
+    // Check that this session uses the load-balancing policy that we need.
+    Preconditions.checkArgument(
+        session.getCluster().getConfiguration().getPolicies().getLoadBalancingPolicy()
+            instanceof ConsistentHostOrderPolicy
+    );
   }
 
   /**
@@ -105,26 +114,13 @@ public class SubsplitCreator {
    * @return A map from tokens (stored as strings) to the master nodes (stored as IP addresses).
    */
   private Map<String, String> getTokenToMasterNodeMapping(Configuration conf) {
-
-    // Create a session with a custom load-balancing policy that will ensure that we send queries
-    // for system.local and system.peers to the same node.
-    Cluster cluster = Cluster
-        .builder()
-        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
-        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
-        .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
-        .build();
-    Session session = cluster.connect();
-
     Map<String, String> tokensToMasterNodes = Maps.newHashMap();
 
     // Get the set of tokens for the local host.
-    updateTokenListForLocalHost(session, tokensToMasterNodes);
+    updateTokenListForLocalHost(mSession, tokensToMasterNodes);
 
     // Query the `local` and `peers` tables to get mappings from tokens to hosts.
-    updateTokenListForPeers(session, tokensToMasterNodes);
-
-    cluster.close();
+    updateTokenListForPeers(mSession, tokensToMasterNodes);
 
     return tokensToMasterNodes;
   }
