@@ -147,6 +147,10 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   /** {@inheritDoc} */
   @Override
   public void initialize(InputSplit split, TaskAttemptContext context) throws IOException {
+    initializeWithConf(split, context.getConfiguration());
+  }
+
+  void initializeWithConf(InputSplit split, Configuration conf) throws IOException {
     // Get the partition key token range for this input split.
     Preconditions.checkArgument(split instanceof CqlInputSplit);
     if (split instanceof CqlInputSplit) {
@@ -155,7 +159,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       throw new IOException("Illegal input split format " + CqlInputSplit.class);
     }
 
-    mConf = context.getConfiguration();
+    mConf = conf;
     mSession = openSession(mConf);
 
     // Extract the CQL query from the Configuration and make a prepared statement with
@@ -195,6 +199,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
     for (CqlQuerySpec querySpec : querySpecs) {
       String queryString = createCqlQuery(querySpec);
+      LOG.debug(queryString);
       mCqlQueries.add(mSession.prepare(queryString));
     }
   }
@@ -208,14 +213,14 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
     // Construct a new where clause that include the token range.
     String whereTokenClause = String.format(
-        "WHERE %s >= ? AND WHERE %s <= ?",
+        "%s >= ? AND %s <= ?",
         mTokenColumn,
         mTokenColumn);
     final String whereClause;
     if (userDefinedWhereClauses.contains("WHERE")) {
-      whereClause = whereTokenClause + " AND " + userDefinedWhereClauses;
+      whereClause = userDefinedWhereClauses + " AND " + whereTokenClause;
     } else {
-      whereClause = whereTokenClause;
+      whereClause = "WHERE " + whereTokenClause;
     }
 
     // Add the token for the partition key to the SELECT statement.
@@ -231,7 +236,8 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     );
   }
 
-  private List<String> getPartitioningKeysForQuery(CqlQuerySpec query) {
+  // package protected for testing...
+  List<String> getPartitioningKeysForQuery(CqlQuerySpec query) {
     String keyspace = query.getKeyspace();
     String tableName = query.getTable();
 
@@ -250,7 +256,9 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   }
 
   private List<Pair<String, DataType>> getColumnsToCheckAndTypes(Configuration conf) {
-    // TODO: For now this is just the partition key, but it could later include other columns.
+    // TODO: For now this is just token(partition key), but it could later include other columns.
+
+    /*
     List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
     CqlQuerySpec query = querySpecs.get(0);
 
@@ -270,6 +278,10 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       DataType dataType = columnMetadata.getType();
       columnsToCheck.add(Pair.of(name, dataType));
     }
+    return columnsToCheck;
+    */
+    List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList(
+        Pair.of(mTokenColumn, DataType.bigint()));
     return columnsToCheck;
   }
 
