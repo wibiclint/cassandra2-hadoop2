@@ -17,17 +17,18 @@
  */
 package org.apache.cassandra.hadoop2.NativeInputFormat;
 
-import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
-import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.mapreduce.InputSplit;
-
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
+
+import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
+import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.mapreduce.InputSplit;
 
 public class CqlInputSplit extends InputSplit implements Writable {
   private List<TokenRange> tokenRanges;
@@ -104,28 +105,7 @@ public class CqlInputSplit extends InputSplit implements Writable {
     );
   }
 
-  static class TokenRange {
-    private final String startToken;
-    private final String endToken;
-    TokenRange(String startToken, String endToken) {
-      this.startToken = startToken;
-      this.endToken = endToken;
-    }
-
-    String getStartToken() {
-      return startToken;
-    }
-
-    String getEndToken() {
-      return endToken;
-    }
-
-    public String toString() {
-      return String.format(
-          "(%s, %s)",
-          startToken,
-          endToken
-      );
-    }
+  public Iterator<TokenRange> getTokenRangeIterator() {
+    return tokenRanges.iterator();
   }
 }

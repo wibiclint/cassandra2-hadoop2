@@ -15,16 +15,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.hadoop2.cql3;
+package org.apache.cassandra.hadoop2.NativeInputFormat;
 
-import com.datastax.driver.core.*;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Set;
 
-
-import com.datastax.driver.core.exceptions.*;
+import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.ColumnMetadata;
+import com.datastax.driver.core.PreparedStatement;
+import com.datastax.driver.core.ResultSet;
+import com.datastax.driver.core.Row;
+import com.datastax.driver.core.Session;
+import com.datastax.driver.core.TableMetadata;
 import com.google.common.base.Joiner;
-import org.apache.cassandra.hadoop2.ColumnFamilySplit;
-import org.apache.cassandra.hadoop2.ConfigHelper;
-import org.apache.cassandra.thrift.ConsistencyLevel;
+import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
+import com.google.common.collect.Lists;
+import com.google.common.collect.PeekingIterator;
+import com.google.common.collect.Sets;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.mapreduce.InputSplit;
@@ -33,15 +45,11 @@ import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.io.IOException;
-import java.net.InetAddress;
-import java.util.*;
-
 /*
   Note: A lot of the code below uses "token" functions in CQL to limit queries such that they hit
   only a single token range (i.e., that they go to only a particular set of replica nodes).
 
-  You can pay around with the "token" function in the CQLSH.  See this example below:
+  You can play around with the "token" function in the CQLSH.  See this example below:
 
   cqlsh:fiddle> DESCRIBE TABLE weather;
 
@@ -97,20 +105,28 @@ import java.util.*;
  * and make that the Mapper key.
  *
  */
-public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
-  private static final Logger LOG = LoggerFactory.getLogger(DataStaxCqlPagingRecordReader.class);
-
-  /** TODO: Find a reasonable value for this. */
-  public static final int DEFAULT_CQL_PAGE_LIMIT = 1000;
+public class CqlRecordReader extends RecordReader<Text, List<Row>> {
+  private static final Logger LOG = LoggerFactory.getLogger(CqlRecordReader.class);
 
   /** Information (start and end tokens, total number of rows) for this split. */
-  private ColumnFamilySplit mColumnFamilySplit;
+  private CqlInputSplit mInputSplit;
 
-  /** Iterator over all of the rows for this split.  Handles paging transparently. */
-  private Iterator<Row> mRowIterator;
+  /** List of user-specified queries, with token ranges in them. */
+  private List<PreparedStatement> mCqlQueries;
 
-  /** Current row. */
-  private Row mCurrentRow;
+  /**
+   * Iterator over all of the rows returned for all of our various queries.
+   *
+   * This iterator combines all of the rows for all of our separate queries.  We need to reassign
+   * this iterator every time we need to fetch a new token range.
+   */
+  private MultiRowIterator mMultiRowIterator;
+
+  /** Current set of fresh rows, ready to serve!. */
+  private List<Row> mCurrentRows;
+
+  /** Iterator over all of the token ranges for this split. */
+  private Iterator<TokenRange> mTokenRangeIterator;
 
   /** Open session for queries. */
   private Session mSession;
@@ -119,100 +135,142 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
   private int mRowCount;
 
   /** {@inheritDoc} */
-  public DataStaxCqlPagingRecordReader() { super(); }
+  public CqlRecordReader() { super(); }
+
 
   /** {@inheritDoc} */
   @Override
   public void initialize(InputSplit split, TaskAttemptContext context) throws IOException {
     // Get the partition key token range for this input split.
-    mColumnFamilySplit = (ColumnFamilySplit) split;
+    Preconditions.checkArgument(split instanceof CqlInputSplit);
+    if (split instanceof CqlInputSplit) {
+      mInputSplit = (CqlInputSplit) split;
+    } else {
+      throw new IOException("Illegal input split format " + CqlInputSplit.class);
+    }
 
     Configuration conf = context.getConfiguration();
 
-    // Get the keyspace, column family (CQL "table"), and the columns that the user is interested in.
-    String columnFamilyName = ConfigHelper.getInputColumnFamily(conf);
-    String keyspace = ConfigHelper.getInputKeyspace(conf);
-    String userRequestedColumns = CqlConfigHelper.getInputcolumns(conf);
+    mSession = openSession(conf);
 
-    // The user can add "WHERE" clauses to the query (we shall also add a "WHERE" clause later to
-    // limit the partition key ranges such that we hit onl a single set of replica nodes).
-    String userDefinedWhereClauses = CqlConfigHelper.getInputWhereClauses(conf);
+    // Extract the CQL query from the Configuration and make a prepared statement with
+    // placeholders (?s) for the token range.
+    initializeCqlStatements(conf);
 
-    // The user can also specify a consistency level for the reads for this Hadoop job.
-    ConsistencyLevel consistencyLevel = ConsistencyLevel.valueOf(ConfigHelper.getReadConsistencyLevel(conf));
+    // Create an iterator to go through all of the token ranges.
+    mTokenRangeIterator = mInputSplit.getTokenRangeIterator();
+    assert(mTokenRangeIterator.hasNext());
 
-    // Get a connection to one of the data nodes for this input split.
-    String backupHost = ConfigHelper.getInputInitialAddress(conf);
-    int port = ConfigHelper.getInputNativeTransportPort(conf);
-    mSession = openSession(
-        mColumnFamilySplit.getLocations(),
-        backupHost,
-        port);
-
-    // TODO: Pick a better exception type here.
-    if (null == mSession) {
-      throw new RuntimeException("Could not connect to any hosts!");
-    }
-
-    // Actually execute the query to create the row iterator!
-    ResultSet resultSet = composeAndExecuteQuery(
-        mSession,
-        keyspace,
-        columnFamilyName,
-        userRequestedColumns,
-        userDefinedWhereClauses,
-        mColumnFamilySplit.getStartToken(),
-        mColumnFamilySplit.getEndToken()
-    );
-
-    mCurrentRow = null;
     mRowCount = 0;
-    mRowIterator = resultSet.iterator();
+
+    queryNextTokenRange();
+
 
     // TODO: Fetch the first row?
     //this.nextKeyValue();
   }
 
   /**
-   * Create an open session for reading data for this input split.
+   * Initialize the list of CQL statements to execute user-specified queries over a set of Cassandra
+   * column families.
    *
-   * Preferably connect to one of the replica nodes for the token range for this input split.  If
-   * none are available, fall back to the original coordinator node supplied by the user.
-   *
-   * @param dataNodes List of replica nodes for the token range for this input split.
-   * @param coordinatorNode User-specified coordinator node to use as a backup.
-   * @param port RPC port for Cassandra connections.
-   * @return An open session to one of the nodes.
+   * Create the statements with the user-specified table names, columns to fetch, and WHERE clauses.
+   * Add WHERE clauses for the token range, and make sure to select the token of the primary key.
    */
-  private Session openSession(String[] dataNodes, String coordinatorNode, int port) {
-    // Add all of the data nodes for this input split.
-    List<String> allHostsToTry = Arrays.asList(dataNodes);
+  private void initializeCqlStatements(Configuration conf) {
+    // Create a CQL statement that we can use to fetch data per the user's specification.
+    mCqlQueries = Lists.newArrayList();
 
-    // As a backup, try the original coordinator node specified by the user.
-    //allHostsToTry.add(coordinatorNode);
+    List<NewCqlConfigHelper.CqlQuerySpec> cqlQuerySpecs =
+        NewCqlConfigHelper.getInputCqlQueries(conf);
 
-    for (String host: allHostsToTry) {
-      LOG.info("Trying to connect to host " + host + " with port " + port);
-      try {
-        Cluster cluster = Cluster.builder().addContactPoint(host).withPort(port).build();
-        //Cluster cluster = Cluster.builder().addContactPoint("localhost").withPort(9042).build();
-        return cluster.connect();
-      } catch (NoHostAvailableException e) {
-        Map<InetAddress, Throwable> errors = e.getErrors();
-        for (InetAddress addr : errors.keySet()) {
-          LOG.info(">>>> Problem with address " + addr);
-          LOG.info(">>>> Problem was " + errors.get(addr).toString());
-          LOG.info(">>> Trace = " + errors.get(addr).getStackTrace());
-        }
-        LOG.info(">>>>> " + e.toString());
-        continue;
-      } catch (com.datastax.driver.core.exceptions.AuthenticationException e) {
-        LOG.info(e.toString());
-        continue;
+    // Figure out the columns in the partition key.
+    List<String> partitioningKeys = getPartitioningKeys(cqlQuerySpecs);
+
+    // Make sure to fetch the token(partition key).
+
+    // Add a WHERE clause for the token(partition key).
+
+    // TODO: Fetch any other columns to compare (beyond just those in the partition key).
+    // (For now, just compare the partition key.)
+
+    //String tokenWhereClause = ' WHERE '
+
+  }
+
+  private List<String> getPartitioningKeys(Collection<NewCqlConfigHelper.CqlQuerySpec> queries) {
+    // Get the partition key columns from table metadata for each table.
+    // These lists should always be the same.
+    List<String> initialPartitionKeyNames = null;
+    for (NewCqlConfigHelper.CqlQuerySpec query : queries) {
+      if (null == initialPartitionKeyNames) {
+        initialPartitionKeyNames = getPartitioningKeysForQuery(query);
+        continue
+      }
+      // Make sure that this query's table has the same partitioning key as the others!
+      List<String> partitionKeyNames = getPartitioningKeysForQuery(query);
+      if (partitionKeyNames.size() != initialPartitionKeyNames.size()) {
+        throw new IOException("Partition keys do not all have the same size!");
       }
     }
-    return null;
   }
+
+  private List<String> getPartitioningKeysForQuery(NewCqlConfigHelper.CqlQuerySpec query) {
+    String keyspace = query.getKeyspace();
+    String tableName = query.getTable();
+
+    // Get the metadata for this table.
+    TableMetadata tableMetadata = mSession
+        .getCluster()
+        .getMetadata()
+        .getKeyspace(keyspace)
+        .getTable(tableName);
+
+    List<String> partitionKeyNames = Lists.newArrayList();
+    for (ColumnMetadata columnMetadata : tableMetadata.getPartitionKey()) {
+      partitionKeyNames.add(columnMetadata.getName());
+    }
+    return partitionKeyNames;
+  }
+
+
+
+  /**
+   * Execute all of our queries over the next token range in our list of token ranges for this
+   * input split.
+   *
+   * If were are out of token ranges, then set the current row and the current row iterator both
+   * to null.
+   */
+  private void queryNextTokenRange() {
+    Preconditions.checkArgument(mTokenRangeIterator.hasNext());
+
+    TokenRange nextTokenRange = mTokenRangeIterator.next();
+
+    // Actually execute the query to create the row iterator!
+    ResultSet resultSet = composeAndExecuteQuery(
+        mSession,
+        nextTokenRange.getStartToken(),
+        nextTokenRange.getEndToken()
+    );
+
+    mCurrentRows = null;
+    mRowIterator = resultSet.iterator();
+  }
+
+  public Session openSession(Configuration conf) {
+    // TODO: Error checking if there are problems getting a session?
+    // Create a session with a custom load-balancing policy that will ensure that we send queries
+    // for system.local and system.peers to the same node.
+    Cluster cluster = Cluster
+        .builder()
+        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
+        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
+        .build();
+    return cluster.connect();
+  }
+
 
   /**
    * Create a Cassandra CQL query for the specified Hadoop job and execute it, returning a result set.
@@ -311,33 +369,33 @@ public class DataStaxCqlPagingRecordReader extends RecordReader<Text, Row> {
   public Text getCurrentKey() { return new Text("foo"); }
 
   /** {@inheritDoc} */
-  public Row getCurrentValue() {
+  public List<Row> getCurrentValue() {
     LOG.info("Returning row value.");
-    if (null == mCurrentRow) {
+    if (null == mCurrentRows) {
       LOG.info("\tRow is null!");
     } else {
       LOG.info("\tRow is not null!");
     }
-    return mCurrentRow;
+    return mCurrentRows;
   }
 
   /** {@inheritDoc} */
   public float getProgress() {
-    if (null == mCurrentRow) {
+    if (null == mCurrentRows) {
       return 0.0f;
     } else {
-      return ((float) mRowCount) / mColumnFamilySplit.getLength();
+      return ((float) mRowCount) / mInputSplit.getLength();
     }
   }
 
   /** {@inheritDoc} */
   public boolean nextKeyValue() throws IOException {
     if (mRowIterator.hasNext()) {
-      mCurrentRow = mRowIterator.next();
+      mCurrentRows = mRowIterator.next();
       mRowCount += 1;
       return true;
     } else {
-      mCurrentRow = null;
+      mCurrentRows = null;
       return false;
     }
   }

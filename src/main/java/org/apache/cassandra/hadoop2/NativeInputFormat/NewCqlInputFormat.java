@@ -17,21 +17,22 @@
  */
 package org.apache.cassandra.hadoop2.NativeInputFormat;
 
-import com.datastax.driver.core.*;
-import com.datastax.driver.core.Cluster;
-import com.google.common.base.Joiner;
+import java.io.IOException;
+import java.util.List;
+import java.util.Set;
+
+import com.datastax.driver.core.Row;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.mapreduce.*;
+import org.apache.hadoop.mapreduce.InputFormat;
+import org.apache.hadoop.mapreduce.InputSplit;
+import org.apache.hadoop.mapreduce.JobContext;
+import org.apache.hadoop.mapreduce.RecordReader;
+import org.apache.hadoop.mapreduce.TaskAttemptContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.util.*;
 
 // TODO: Update javadoc.
 
@@ -103,19 +104,22 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
   public List<InputSplit> getSplitsFromConf(Configuration conf) throws IOException {
     validateConfiguration(conf);
 
-    // Get a list of all of the subsplitsFromTokens.  A "subsplit" contains the following:
-    // - A token range (corresponding to a virtual node in the C* cluster).
+    // Get a list of all of the subsplits.  A "subsplit" contains the following:
+    // - A token range (corresponding to a virtual node in the C* cluster)
     // - A list of replica nodes for that token range
-    // - An estimated row count for that token range
     final SubsplitCreator subsplitCreator = new SubsplitCreator(conf);
-    final Set<Subsplit> subsplitsFromTokens = subsplitCreator.createSubsplits();
+    final List<Subsplit> subsplitsFromTokens = subsplitCreator.createSubsplits();
     LOG.debug(String.format("Created %d subsplits from tokens", subsplitsFromTokens.size()));
 
-    // Combine subsplits until we are close the user's requested total number of input splits.
+    // In this InputFormat, we allow the user to specify a desired number of InputSplits.  We
+    // will likely have far more subsplits (vnodes) than desired InputSplits.  Therefore, we combine
+    // subsplits (hopefully those that share the same replica nodes) until we get to our desired
+    // InputSplit count.
     final SubsplitCombiner subsplitCombiner = new SubsplitCombiner(conf);
 
     // Get a list of all of the token ranges in the Cassandra cluster.
     List<InputSplit> inputSplitList = Lists.newArrayList();
+
     // Java is annoying here about casting a list.
     inputSplitList.addAll(subsplitCombiner.combineSubsplits(subsplitsFromTokens));
     return inputSplitList;
