@@ -41,6 +41,7 @@ public abstract class BaseInputFormatTest {
   protected static final String COL_PLAYER = "player";
 
   protected static final int NUM_TEAMS = 8;
+  protected static final int NUM_CITIES = 7;
   protected static final int NUM_STATES = 4;
 
   protected static Map<String, TeamData> mTeams;

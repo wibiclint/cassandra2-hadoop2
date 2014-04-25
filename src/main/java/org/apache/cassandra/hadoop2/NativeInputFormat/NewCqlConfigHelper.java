@@ -1,8 +1,11 @@
 package org.apache.cassandra.hadoop2.NativeInputFormat;
 
+import java.util.ArrayList;
 import java.util.List;
 
+import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 
@@ -64,6 +67,23 @@ public class NewCqlConfigHelper {
     return queries;
   }
 
+  // -----------------------------------------------------------------------------------------------
+  // We allow you to specify additional columns (beyond the partition key) to use for grouping
+  // together rows.
+  private static final String INPUT_CQL_QUERY_CLUSTERING_COLUMNS =
+      "cassandra.input.query.clustering.columns";
+
+  public static void setInputCqlQueryClusteringColumnsCsv(Configuration conf, String... columns) {
+    conf.set(INPUT_CQL_QUERY_CLUSTERING_COLUMNS, Joiner.on(",").join(columns));
+  }
+
+  public static List<String> getInputCqlQueryClusteringColumns(Configuration conf) {
+    String csv = conf.get(INPUT_CQL_QUERY_CLUSTERING_COLUMNS, null);
+    if (null == csv) {
+      return new ArrayList<String>();
+    }
+    return Splitter.on(",").splitToList(csv);
+  }
   // -----------------------------------------------------------------------------------------------
   // Everything else.
 

@@ -26,7 +26,7 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testBasicRecordReader() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, "logo");
+    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {
@@ -74,4 +74,36 @@ public class TestRecordReader extends BaseInputFormatTest {
       assertFalse("Should not get here.", false);
     }
   }
+
+  @Test
+  public void testGroupWithClusteringColumn() {
+    // Very basic query, just select everything from the logos table.
+    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
+    NewCqlConfigHelper.setInputCqlQueryClusteringColumnsCsv(mConf, COL_CITY);
+    CqlRecordReader recordReader = new CqlRecordReader();
+
+    try {
+      recordReader.initializeWithConf(getCqlInputSplit(), mConf);
+
+      // Partition key here is just the state.
+      CqlQuerySpec querySpec = NewCqlConfigHelper.getInputCqlQueries(mConf).get(0);
+      List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
+      assertEquals(1, partitioningKeys.size());
+
+      // The RecordReader should group by primary key, so we should see a different List<Row> for
+      // each unique state.
+      int stateCount = 0;
+      while(true) {
+        if (!recordReader.nextKeyValue()) {
+          break;
+        }
+        stateCount += 1;
+      }
+      assertEquals(NUM_CITIES, stateCount);
+
+    } catch (IOException ioe) {
+      assertFalse("Should not get here.", false);
+    }
+  }
+
 }

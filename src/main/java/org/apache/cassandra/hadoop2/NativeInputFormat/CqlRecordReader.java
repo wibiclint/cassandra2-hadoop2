@@ -19,9 +19,11 @@ package org.apache.cassandra.hadoop2.NativeInputFormat;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ColumnMetadata;
@@ -35,6 +37,7 @@ import com.datastax.driver.core.Session;
 import com.datastax.driver.core.TableMetadata;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
+import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
@@ -234,7 +237,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   }
 
   private String getColumnCsvForQuery(CqlQuerySpec querySpec) {
-    final String userDefinedColumnCsv;
+    final String columnCsv;
 
     // If the user asked for "*", then get every column in the table.
     if (querySpec.getColumnCsv().equals("*")) {
@@ -247,18 +250,24 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
       for (ColumnMetadata columnMetadata : tableMetadata.getColumns()) {
         columns.add(columnMetadata.getName());
       }
-      userDefinedColumnCsv = COMMA_JOINER.join(columns);
+      columnCsv = COMMA_JOINER.join(columns);
     } else {
-      userDefinedColumnCsv = querySpec.getColumnCsv();
+      // Add any extra columns here...
+      List<String> groupingClusteringColumns =
+          NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
+
+      List<String> userColumns = Splitter.on(",").splitToList(querySpec.getColumnCsv());
+      List<String> allColumns = Lists.newArrayList(groupingClusteringColumns);
+      for (String userColumn: userColumns) {
+        if (!allColumns.contains(userColumn)) {
+          allColumns.add(userColumn);
+        }
+      }
+      columnCsv = COMMA_JOINER.join(allColumns);
     }
 
-    // TODO: Add clustering columns that we want to compare.
-
     // Add the token for the partition key to the SELECT statement.
-    final String columnCsv = COMMA_JOINER.join(mTokenColumn, userDefinedColumnCsv);
-
-    return columnCsv;
-
+    return COMMA_JOINER.join(mTokenColumn, columnCsv);
   }
 
   // package protected for testing...
@@ -283,7 +292,8 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   private List<Pair<String, DataType>> getColumnsToCheckAndTypes(Configuration conf) {
     // TODO: For now this is just token(partition key), but it could later include other columns.
 
-    /*
+    List<String> clusteringColumns = NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
+
     List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
     CqlQuerySpec query = querySpecs.get(0);
 
@@ -297,16 +307,15 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
         .getKeyspace(keyspace)
         .getTable(tableName);
 
-    List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList();
-    for (ColumnMetadata columnMetadata : tableMetadata.getPartitionKey()) {
+    List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList(
+        Pair.of(mTokenColumn, DataType.bigint()));
+    for (String clusteringColumn : clusteringColumns) {
+      ColumnMetadata columnMetadata = tableMetadata.getColumn(clusteringColumn);
+      // TODO: Check this is actually a clustering column!
       String name = columnMetadata.getName();
       DataType dataType = columnMetadata.getType();
       columnsToCheck.add(Pair.of(name, dataType));
     }
-    return columnsToCheck;
-    */
-    List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList(
-        Pair.of(mTokenColumn, DataType.bigint()));
     return columnsToCheck;
   }
 
