@@ -85,7 +85,7 @@ public abstract class BaseInputFormatTest {
     try {
       // Use a custom YAML file that specifies different ports from normal for RPC and thrift.
       //File yamlFile = new File(getClass().getResource("/cassandra.yaml").getFile());
-      File yamlFile = new File(BaseTest.class.getResource("/cassandra.yaml").getFile());
+      File yamlFile = new File(BaseInputFormatTest.class.getResource("/cassandra.yaml").getFile());
 
       assert (yamlFile.exists());
       System.setProperty("cassandra.config", "file:" + yamlFile.getAbsolutePath());
