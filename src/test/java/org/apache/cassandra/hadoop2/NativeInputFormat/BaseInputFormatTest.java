@@ -4,7 +4,10 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import java.io.File;
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -17,6 +20,9 @@ import com.datastax.driver.core.Session;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import org.apache.cassandra.config.DatabaseDescriptor;
+import org.apache.cassandra.service.EmbeddedCassandraService;
+import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Before;
@@ -54,11 +60,10 @@ public abstract class BaseInputFormatTest {
    * Use a different native port to avoid conflict with any other local C* clusters (this native
    * port is also specified in the YAML file). /
    */
-  //private static final int NATIVE_PORT = 9043;
-  private static final int NATIVE_PORT = 9042;
+  private static final int NATIVE_PORT = 9043;
+  //private static final int NATIVE_PORT = 9042;
 
   private static void startCluster() throws IOException {
-    /*
     try {
       // Use a custom YAML file that specifies different ports from normal for RPC and thrift.
       //File yamlFile = new File(getClass().getResource("/cassandra.yaml").getFile());
@@ -84,9 +89,8 @@ public abstract class BaseInputFormatTest {
     } catch (IOException ioe) {
       throw new IOException("Cannot start embedded C* service!");
     }
-    */
-    //Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").withPort(NATIVE_PORT).build();
-    Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
+    Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").withPort(NATIVE_PORT).build();
+    //Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
     mSession = cluster.connect();
   }
 

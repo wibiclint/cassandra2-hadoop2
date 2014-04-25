@@ -19,7 +19,6 @@ package org.apache.cassandra.hadoop2.NativeInputFormat;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -39,6 +38,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Sets;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
@@ -292,7 +292,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   private List<Pair<String, DataType>> getColumnsToCheckAndTypes(Configuration conf) {
     // TODO: For now this is just token(partition key), but it could later include other columns.
 
-    List<String> clusteringColumns = NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
+    List<String> columnsForOrdering = NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
 
     List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
     CqlQuerySpec query = querySpecs.get(0);
@@ -307,11 +307,18 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
         .getKeyspace(keyspace)
         .getTable(tableName);
 
+    // Get a set of all of the clustering column names.
+    Set<String> clusteringColumnNames = Sets.newHashSet();
+    for (ColumnMetadata columnMetadata : tableMetadata.getClusteringColumns()) {
+      clusteringColumnNames.add(columnMetadata.getName());
+    }
+    Preconditions.checkArgument(clusteringColumnNames.containsAll(columnsForOrdering));
+
     List<Pair<String, DataType>> columnsToCheck = Lists.newArrayList(
         Pair.of(mTokenColumn, DataType.bigint()));
-    for (String clusteringColumn : clusteringColumns) {
+
+    for (String clusteringColumn : columnsForOrdering) {
       ColumnMetadata columnMetadata = tableMetadata.getColumn(clusteringColumn);
-      // TODO: Check this is actually a clustering column!
       String name = columnMetadata.getName();
       DataType dataType = columnMetadata.getType();
       columnsToCheck.add(Pair.of(name, dataType));
