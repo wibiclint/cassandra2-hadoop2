@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.io.DataInput;
 import java.io.DataOutput;
@@ -30,31 +30,31 @@ import com.google.common.collect.Sets;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.mapreduce.InputSplit;
 
-public class CqlInputSplit extends InputSplit implements Writable {
+class MultiQueryInputSplit extends InputSplit implements Writable {
   private List<TokenRange> tokenRanges;
   private List<String> hosts;
 
   // TODO: Is there a better answer here?
   private static final long SPLIT_LENGTH = 1L;
 
-  public static CqlInputSplit createFromSubplit(Subsplit subsplit) {
-    return new CqlInputSplit(
+  public static MultiQueryInputSplit createFromSubplit(Subsplit subsplit) {
+    return new MultiQueryInputSplit(
         Lists.newArrayList(new TokenRange(subsplit.startToken, subsplit.endToken)),
         Lists.newArrayList(subsplit.getHosts())
     );
   }
 
-  public static CqlInputSplit createFromSubplits(Collection<Subsplit> subsplits) {
+  public static MultiQueryInputSplit createFromSubplits(Collection<Subsplit> subsplits) {
     List<TokenRange> tokenRanges = Lists.newArrayList();
     Set<String> hosts = Sets.newHashSet();
     for (Subsplit subsplit : subsplits) {
       tokenRanges.add(new TokenRange(subsplit.getStartToken(), subsplit.getEndToken()));
       hosts.addAll(subsplit.getHosts());
     }
-    return new CqlInputSplit(tokenRanges, Lists.newArrayList(hosts));
+    return new MultiQueryInputSplit(tokenRanges, Lists.newArrayList(hosts));
   }
 
-  private CqlInputSplit(List<TokenRange> tokenRanges, List<String> hosts) {
+  private MultiQueryInputSplit(List<TokenRange> tokenRanges, List<String> hosts) {
     this.tokenRanges = tokenRanges;
     this.hosts = hosts;
   }

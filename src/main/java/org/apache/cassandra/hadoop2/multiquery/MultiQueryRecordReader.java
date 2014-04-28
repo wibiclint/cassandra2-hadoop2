@@ -15,7 +15,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -108,11 +108,11 @@ import org.slf4j.LoggerFactory;
  * and make that the Mapper key.
  *
  */
-public class CqlRecordReader extends RecordReader<Text, List<Row>> {
-  private static final Logger LOG = LoggerFactory.getLogger(CqlRecordReader.class);
+public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
+  private static final Logger LOG = LoggerFactory.getLogger(MultiQueryRecordReader.class);
 
   /** Information (start and end tokens, total number of rows) for this split. */
-  private CqlInputSplit mInputSplit;
+  private MultiQueryInputSplit mInputSplit;
 
   /** List of user-specified queries, with token ranges in them. */
   private List<PreparedStatement> mCqlQueries;
@@ -144,7 +144,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   private Configuration mConf;
 
   /** {@inheritDoc} */
-  public CqlRecordReader() { super(); }
+  public MultiQueryRecordReader() { super(); }
 
 
   /** {@inheritDoc} */
@@ -155,11 +155,11 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
   void initializeWithConf(InputSplit split, Configuration conf) throws IOException {
     // Get the partition key token range for this input split.
-    Preconditions.checkArgument(split instanceof CqlInputSplit);
-    if (split instanceof CqlInputSplit) {
-      mInputSplit = (CqlInputSplit) split;
+    Preconditions.checkArgument(split instanceof MultiQueryInputSplit);
+    if (split instanceof MultiQueryInputSplit) {
+      mInputSplit = (MultiQueryInputSplit) split;
     } else {
-      throw new IOException("Illegal input split format " + CqlInputSplit.class);
+      throw new IOException("Illegal input split format " + MultiQueryInputSplit.class);
     }
 
     mConf = conf;
@@ -179,7 +179,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
 
   private String getTokenColumn(Configuration conf) {
     List<CqlQuerySpec> cqlQuerySpecs =
-        NewCqlConfigHelper.getInputCqlQueries(conf);
+        ConfigHelper.getInputCqlQueries(conf);
 
     // Figure out the columns in the partition key.
     List<String> partitioningKeys = getPartitioningKeysForQuery(cqlQuerySpecs.get(0));
@@ -198,7 +198,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     // Create a CQL statement that we can use to fetch data per the user's specification.
     mCqlQueries = Lists.newArrayList();
 
-    List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
+    List<CqlQuerySpec> querySpecs = ConfigHelper.getInputCqlQueries(conf);
 
     for (CqlQuerySpec querySpec : querySpecs) {
       String queryString = createCqlQuery(querySpec);
@@ -254,7 +254,7 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     } else {
       // Add any extra columns here...
       List<String> groupingClusteringColumns =
-          NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
+          ConfigHelper.getInputCqlQueryClusteringColumns(mConf);
 
       List<String> userColumns = Splitter.on(",").splitToList(querySpec.getColumnCsv());
       List<String> allColumns = Lists.newArrayList(groupingClusteringColumns);
@@ -292,9 +292,9 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
   private List<Pair<String, DataType>> getColumnsToCheckAndTypes(Configuration conf) {
     // TODO: For now this is just token(partition key), but it could later include other columns.
 
-    List<String> columnsForOrdering = NewCqlConfigHelper.getInputCqlQueryClusteringColumns(mConf);
+    List<String> columnsForOrdering = ConfigHelper.getInputCqlQueryClusteringColumns(mConf);
 
-    List<CqlQuerySpec> querySpecs = NewCqlConfigHelper.getInputCqlQueries(conf);
+    List<CqlQuerySpec> querySpecs = ConfigHelper.getInputCqlQueries(conf);
     CqlQuerySpec query = querySpecs.get(0);
 
     String keyspace = query.getKeyspace();
@@ -357,8 +357,8 @@ public class CqlRecordReader extends RecordReader<Text, List<Row>> {
     // for system.local and system.peers to the same node.
     Cluster cluster = Cluster
         .builder()
-        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
-        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .addContactPoints(ConfigHelper.getInputNativeTransportContactPoints(conf))
+        .withPort(ConfigHelper.getDefaultInputNativeTransportPort(conf))
         .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
         .build();
     return cluster.connect();

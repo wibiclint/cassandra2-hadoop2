@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -9,9 +9,9 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 
-public class NewCqlConfigHelper {
+public class ConfigHelper {
   /** This is just a static utility class. */
-  private NewCqlConfigHelper() {
+  private ConfigHelper() {
     throw new AssertionError();
   }
 

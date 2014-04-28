@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.net.InetAddress;
 import java.util.Collections;
@@ -6,7 +6,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
@@ -20,7 +19,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Class responsible for creating subsplits.
  */
-public class SubsplitCreator {
+class SubsplitCreator {
   private static final Logger LOG = LoggerFactory.getLogger(SubsplitCreator.class);
 
   private final Configuration mConf;

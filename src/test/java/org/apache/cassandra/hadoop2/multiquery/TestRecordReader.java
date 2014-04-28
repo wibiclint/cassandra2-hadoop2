@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -16,21 +16,21 @@ import org.slf4j.LoggerFactory;
 public class TestRecordReader extends BaseInputFormatTest {
   private static final Logger LOG = LoggerFactory.getLogger(TestRecordReader.class);
 
-  private CqlInputSplit getCqlInputSplit() {
+  private MultiQueryInputSplit getCqlInputSplit() {
     // Create a single token range for the entire ring.
     Subsplit subsplit = Subsplit.createFromHost(
         Long.toString(Subsplit.RING_START_TOKEN),
         Long.toString(Subsplit.RING_END_TOKEN),
         "127.0.0.1");
 
-    CqlInputSplit split = CqlInputSplit.createFromSubplit(subsplit);
+    MultiQueryInputSplit split = MultiQueryInputSplit.createFromSubplit(subsplit);
     return split;
   }
 
   @Test
   public void testBasicRecordReader() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -39,13 +39,13 @@ public class TestRecordReader extends BaseInputFormatTest {
             .build()
     );
 
-    CqlRecordReader recordReader = new CqlRecordReader();
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
 
     try {
       recordReader.initializeWithConf(getCqlInputSplit(), mConf);
 
       // Partition key here is just the state.
-      CqlQuerySpec querySpec = NewCqlConfigHelper.getInputCqlQueries(mConf).get(0);
+      CqlQuerySpec querySpec = ConfigHelper.getInputCqlQueries(mConf).get(0);
       List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
       assertEquals(1, partitioningKeys.size());
 
@@ -68,14 +68,14 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testSelectAll() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
             .withTable(TABLE_LOGOS)
             .build()
     );
-    CqlRecordReader recordReader = new CqlRecordReader();
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
 
     try {
       recordReader.initializeWithConf(getCqlInputSplit(), mConf);
@@ -96,7 +96,7 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testGroupWithClusteringColumn() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -104,14 +104,14 @@ public class TestRecordReader extends BaseInputFormatTest {
             .withColumns(COL_LOGO)
             .build()
     );
-    NewCqlConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY);
-    CqlRecordReader recordReader = new CqlRecordReader();
+    ConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY);
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
 
     try {
       recordReader.initializeWithConf(getCqlInputSplit(), mConf);
 
       // Partition key here is just the state.
-      CqlQuerySpec querySpec = NewCqlConfigHelper.getInputCqlQueries(mConf).get(0);
+      CqlQuerySpec querySpec = ConfigHelper.getInputCqlQueries(mConf).get(0);
       List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
       assertEquals(1, partitioningKeys.size());
 
@@ -134,7 +134,7 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testTwoQueries() {
     // Select everything from logos and everything from players.
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -142,7 +142,7 @@ public class TestRecordReader extends BaseInputFormatTest {
             .withColumns(COL_LOGO)
             .build()
     );
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -150,13 +150,13 @@ public class TestRecordReader extends BaseInputFormatTest {
             .withColumns(COL_PLAYER)
             .build()
     );
-    CqlRecordReader recordReader = new CqlRecordReader();
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
 
     try {
       recordReader.initializeWithConf(getCqlInputSplit(), mConf);
 
       // Partition key here is just the state.
-      CqlQuerySpec querySpec = NewCqlConfigHelper.getInputCqlQueries(mConf).get(0);
+      CqlQuerySpec querySpec = ConfigHelper.getInputCqlQueries(mConf).get(0);
       List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
       assertEquals(1, partitioningKeys.size());
 
@@ -179,7 +179,7 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testTwoQueriesWithClusteringColumns() {
     // Select from logos and from players.
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -187,7 +187,7 @@ public class TestRecordReader extends BaseInputFormatTest {
             .withColumns(COL_LOGO)
             .build()
     );
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder()
             .withKeyspace(KEYSPACE)
@@ -196,14 +196,14 @@ public class TestRecordReader extends BaseInputFormatTest {
             .build()
     );
     // Cluster by team!
-    NewCqlConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY, COL_TEAM);
-    CqlRecordReader recordReader = new CqlRecordReader();
+    ConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY, COL_TEAM);
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
 
     try {
       recordReader.initializeWithConf(getCqlInputSplit(), mConf);
 
       // Partition key here is just the state.
-      CqlQuerySpec querySpec = NewCqlConfigHelper.getInputCqlQueries(mConf).get(0);
+      CqlQuerySpec querySpec = ConfigHelper.getInputCqlQueries(mConf).get(0);
       List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
       assertEquals(1, partitioningKeys.size());
 

@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -13,7 +13,7 @@ import com.google.common.collect.Sets;
  *
  * This class essentially maps to a Cassandra virtual node (vnode).
  */
-public class Subsplit {
+class Subsplit {
   // TODO: Add separate field for actual owner of token, versus replica nodes?
   String startToken; // inclusive
   String endToken; // inclusive

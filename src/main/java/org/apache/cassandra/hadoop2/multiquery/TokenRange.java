@@ -1,7 +1,7 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 /**
-* Created by clint on 4/2/14.
+* Describes a token range associated with a subsplit.
 */
 class TokenRange {
   private final String startToken;

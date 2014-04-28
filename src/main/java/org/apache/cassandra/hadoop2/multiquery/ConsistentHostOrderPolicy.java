@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.util.Collection;
 import java.util.Iterator;
@@ -20,7 +20,7 @@ import org.slf4j.LoggerFactory;
 /**
  * Always tries hosts in the same order.  Useful for querying system tables.
  */
-public class ConsistentHostOrderPolicy implements LoadBalancingPolicy {
+class ConsistentHostOrderPolicy implements LoadBalancingPolicy {
 
   private static final Logger logger = LoggerFactory.getLogger(ConsistentHostOrderPolicy.class);
 

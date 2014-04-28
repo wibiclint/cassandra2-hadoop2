@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.util.Comparator;
 import java.util.Iterator;
@@ -7,8 +7,6 @@ import java.util.List;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
-import com.datastax.driver.core.exceptions.InvalidTypeException;
-import com.google.common.base.Joiner;
 import com.google.common.collect.ComparisonChain;
 import com.google.common.collect.Iterators;
 import com.google.common.collect.Lists;
@@ -31,7 +29,7 @@ import org.slf4j.LoggerFactory;
  *
  * The primary key must be the same for all of the rows.
  */
-public class MultiRowIterator implements Iterator<List<Row>> {
+class MultiRowIterator implements Iterator<List<Row>> {
   private static final Logger LOG = LoggerFactory.getLogger(MultiRowIterator.class);
 
   private final PeekingIterator<Row> mRowIterator;

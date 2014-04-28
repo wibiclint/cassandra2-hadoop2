@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.util.Arrays;
 import java.util.List;
@@ -9,7 +9,7 @@ import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 
 /**
-* Created by clint on 4/25/14.
+* Specifies a Cassandra query to perform in a Hadoop RecordReader.
 */
 public class CqlQuerySpec {
   private final String mKeyspace;

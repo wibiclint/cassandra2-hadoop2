@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
@@ -8,28 +8,21 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import com.datastax.driver.core.Cluster;
-import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.PreparedStatement;
-import com.datastax.driver.core.ResultSet;
-import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.google.common.base.Preconditions;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.cassandra.config.DatabaseDescriptor;
 import org.apache.cassandra.service.EmbeddedCassandraService;
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.junit.Before;
 import org.junit.BeforeClass;
-import org.junit.Test;
 
 /**
  * Test the multi-row iterator.
@@ -210,8 +203,8 @@ public abstract class BaseInputFormatTest {
   @Before
   public void setupConf() {
     mConf = new Configuration();
-    NewCqlConfigHelper.setInputNativeTransportContactPoints(mConf, "127.0.0.1");
-    NewCqlConfigHelper.setInputNativeTransportPort(mConf, NATIVE_PORT);
+    ConfigHelper.setInputNativeTransportContactPoints(mConf, "127.0.0.1");
+    ConfigHelper.setInputNativeTransportPort(mConf, NATIVE_PORT);
   }
 
   private static class TeamData {

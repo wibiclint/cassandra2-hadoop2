@@ -1,32 +1,16 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import java.io.File;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
-import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.DataType;
-import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.ResultSet;
 import com.datastax.driver.core.Row;
-import com.datastax.driver.core.Session;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import junit.framework.Assert;
-import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.service.EmbeddedCassandraService;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.hadoop.conf.Configuration;
-import org.junit.Before;
-import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -36,7 +20,7 @@ public class TestMultiRowIterator extends BaseInputFormatTest {
 
   @Test
   public void testGroupByOneColumn() {
-    NewCqlConfigHelper.setInputCqlQuery(
+    ConfigHelper.setInputCqlQuery(
         mConf,
         CqlQuerySpec.builder().withKeyspace(KEYSPACE).withTable(TABLE_LOGOS).build());
 
@@ -74,7 +58,7 @@ public class TestMultiRowIterator extends BaseInputFormatTest {
 
   @Test
   public void testGroupByTwoColumns() {
-    NewCqlConfigHelper.setInputCqlQuery(mConf,
+    ConfigHelper.setInputCqlQuery(mConf,
         CqlQuerySpec.builder().withKeyspace(KEYSPACE).withTable(TABLE_LOGOS).build());
 
     ResultSet resultSet = mSession.execute(String.format(

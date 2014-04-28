@@ -15,16 +15,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Set;
 
 import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.io.Text;
@@ -63,8 +61,8 @@ import org.slf4j.LoggerFactory;
  * the user defined the where clause
  *   CQLConfigHelper.setInputWhereClauses. The default is no user defined where clause
  */
-public class NewCqlInputFormat extends InputFormat<Text, Row> {
-  private static final Logger LOG = LoggerFactory.getLogger(NewCqlInputFormat.class);
+public class MultiQueryCqlInputFormat extends InputFormat<Text, Row> {
+  private static final Logger LOG = LoggerFactory.getLogger(MultiQueryCqlInputFormat.class);
 
   /**
    * Validate that all of necessary configuration settings are present.
@@ -74,17 +72,17 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
    * @throws IOException if the configuration is invalid.
    */
   protected void validateConfiguration(Configuration conf, Session session) throws IOException {
-    List<CqlQuerySpec> queries = NewCqlConfigHelper.getInputCqlQueries(conf);
+    List<CqlQuerySpec> queries = ConfigHelper.getInputCqlQueries(conf);
 
     if (0 == queries.size()) {
       throw new IOException("Must specify a query!");
     }
 
     // Check that all keyspaces and tables exist.
-    CqlRecordReader.checkKeyspacesAndTablesExist(session, queries);
+    MultiQueryRecordReader.checkKeyspacesAndTablesExist(session, queries);
 
     // Check that all tables have the same partition keys.
-    CqlRecordReader.checkParitionKeysAreIdentical(session, queries);
+    MultiQueryRecordReader.checkParitionKeysAreIdentical(session, queries);
 
     // Check that all queried columns exist.
 
@@ -123,8 +121,8 @@ public class NewCqlInputFormat extends InputFormat<Text, Row> {
     // for system.local and system.peers to the same node.
     Cluster cluster = Cluster
         .builder()
-        .addContactPoints(NewCqlConfigHelper.getInputNativeTransportContactPoints(conf))
-        .withPort(NewCqlConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .addContactPoints(ConfigHelper.getInputNativeTransportContactPoints(conf))
+        .withPort(ConfigHelper.getDefaultInputNativeTransportPort(conf))
         .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
         .build();
     Session session = cluster.connect();

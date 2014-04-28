@@ -1,4 +1,4 @@
-package org.apache.cassandra.hadoop2.NativeInputFormat;
+package org.apache.cassandra.hadoop2.multiquery;
 /*
  *
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -21,13 +21,9 @@ package org.apache.cassandra.hadoop2.NativeInputFormat;
  */
 
 
-import com.datastax.driver.core.Cluster;
-
 import com.datastax.driver.core.Session;
 import com.google.common.collect.Lists;
-import com.google.common.collect.Sets;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.mapreduce.InputSplit;
 import org.junit.Assert;
 import org.junit.Test;
 import org.slf4j.Logger;
@@ -35,7 +31,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.util.List;
-import java.util.Set;
 
 // THIS IS AN INTEGRATION TESTS AND REQUIRES A LIVE CASSANDRA CLUSTER TO CONNECT TO!
 
@@ -57,10 +52,10 @@ public class TestInputFormatWithBackgroundCassandra {
   public void testCreateSubsplits() throws IOException {
     // Set Cassandra / Hadoop input options.
     Configuration conf = new Configuration();
-    NewCqlConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
-    NewCqlConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
+    ConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
+    ConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
 
-    NewCqlInputFormat inputFormat = new NewCqlInputFormat();
+    MultiQueryCqlInputFormat inputFormat = new MultiQueryCqlInputFormat();
 
     Session session = null;
 
@@ -88,11 +83,11 @@ public class TestInputFormatWithBackgroundCassandra {
     );
 
     Configuration conf = new Configuration();
-    NewCqlConfigHelper.setInputTargetNumSplits(conf, 2);
+    ConfigHelper.setInputTargetNumSplits(conf, 2);
 
     SubsplitCombiner subsplitCombiner = new SubsplitCombiner(conf);
 
-    List<CqlInputSplit> inputSplits = subsplitCombiner.combineSubsplits(smallSubsplits);
+    List<MultiQueryInputSplit> inputSplits = subsplitCombiner.combineSubsplits(smallSubsplits);
 
     Assert.assertEquals(2, inputSplits.size());
   }
