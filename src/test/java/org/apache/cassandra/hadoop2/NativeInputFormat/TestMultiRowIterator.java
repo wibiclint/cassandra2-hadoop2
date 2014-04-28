@@ -36,7 +36,9 @@ public class TestMultiRowIterator extends BaseInputFormatTest {
 
   @Test
   public void testGroupByOneColumn() {
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, "*");
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder().withKeyspace(KEYSPACE).withTable(TABLE_LOGOS).build());
 
     ResultSet resultSet = mSession.execute(String.format(
         "SELECT * from %s.%s",
@@ -72,7 +74,8 @@ public class TestMultiRowIterator extends BaseInputFormatTest {
 
   @Test
   public void testGroupByTwoColumns() {
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, "*");
+    NewCqlConfigHelper.setInputCqlQuery(mConf,
+        CqlQuerySpec.builder().withKeyspace(KEYSPACE).withTable(TABLE_LOGOS).build());
 
     ResultSet resultSet = mSession.execute(String.format(
         "SELECT * from %s.%s",

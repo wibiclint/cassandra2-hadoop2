@@ -30,7 +30,15 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testBasicRecordReader() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .withColumns(COL_LOGO)
+            .build()
+    );
+
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {
@@ -60,7 +68,13 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testSelectAll() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, "*");
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .build()
+    );
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {
@@ -82,8 +96,15 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testGroupWithClusteringColumn() {
     // Very basic query, just select everything from the logos table.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
-    NewCqlConfigHelper.setInputCqlQueryClusteringColumnsCsv(mConf, COL_CITY);
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .withColumns(COL_LOGO)
+            .build()
+    );
+    NewCqlConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY);
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {
@@ -113,8 +134,22 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testTwoQueries() {
     // Select everything from logos and everything from players.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_PLAYERS, COL_PLAYER);
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .withColumns(COL_LOGO)
+            .build()
+    );
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_PLAYERS)
+            .withColumns(COL_PLAYER)
+            .build()
+    );
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {
@@ -144,11 +179,24 @@ public class TestRecordReader extends BaseInputFormatTest {
   @Test
   public void testTwoQueriesWithClusteringColumns() {
     // Select from logos and from players.
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_LOGOS, COL_LOGO);
-    NewCqlConfigHelper.setInputCqlQuery(mConf, KEYSPACE, TABLE_PLAYERS, COL_PLAYER);
-
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .withColumns(COL_LOGO)
+            .build()
+    );
+    NewCqlConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_PLAYERS)
+            .withColumns(COL_PLAYER)
+            .build()
+    );
     // Cluster by team!
-    NewCqlConfigHelper.setInputCqlQueryClusteringColumnsCsv(mConf, COL_CITY, COL_TEAM);
+    NewCqlConfigHelper.setInputCqlQueryClusteringColumns(mConf, COL_CITY, COL_TEAM);
     CqlRecordReader recordReader = new CqlRecordReader();
 
     try {

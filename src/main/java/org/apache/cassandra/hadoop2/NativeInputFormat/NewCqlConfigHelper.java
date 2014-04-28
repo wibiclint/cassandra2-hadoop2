@@ -10,11 +10,10 @@ import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
 
 public class NewCqlConfigHelper {
-
-  // TODO: Figure out if the table name should include a keyspace.
-
-  // TODO: Put all of the query information together into an object.
-  // Try using the Hadoop DefaultStringifier to serialize these objects.
+  /** This is just a static utility class. */
+  private NewCqlConfigHelper() {
+    throw new AssertionError();
+  }
 
   // -----------------------------------------------------------------------------------------------
   // Stuff for keeping track of different CQL queries.
@@ -24,35 +23,18 @@ public class NewCqlConfigHelper {
   private static final String INPUT_CQL_QUERY_COLUMNS = "cassandra.input.query.columns";
   private static final String INPUT_CQL_QUERY_WHERE_CLAUSES = "cassandra.input.query.where.clauses";
 
-  // TODO: User can specify a list of columns to use for saying what rows should be together.
-
-  // TODO: Check that the primary keys (or at least partition keys) are same for each table.
-
-  // TODO: Provide a builder API for specifying all of the different queries?
-
-  public static void setInputCqlQuery(
-      Configuration conf,
-      String keyspace,
-      String table,
-      String columnsCsv,
-      String whereClauses) {
+  public static void setInputCqlQuery(Configuration conf, CqlQuerySpec query) {
     // Get the current query count and increment it.
     int currentQueryCount = conf.getInt(INPUT_CQL_QUERY_COUNTER, 0);
     conf.setInt(INPUT_CQL_QUERY_COUNTER, currentQueryCount+1);
 
-    // Store the collection of columns and the where clause.
-    conf.set(INPUT_CQL_QUERY_KEYSPACE + Integer.toString(currentQueryCount), keyspace);
-    conf.set(INPUT_CQL_QUERY_TABLE + Integer.toString(currentQueryCount), table);
-    conf.set(INPUT_CQL_QUERY_COLUMNS + Integer.toString(currentQueryCount), columnsCsv);
-    conf.set(INPUT_CQL_QUERY_WHERE_CLAUSES + Integer.toString(currentQueryCount), whereClauses);
-  }
+    String queryIndex = Integer.toString(currentQueryCount);
 
-  public static void setInputCqlQuery(
-      Configuration conf,
-      String keyspace,
-      String table,
-      String columnsCsv) {
-    setInputCqlQuery(conf, keyspace, table, columnsCsv, "");
+    // Store the collection of columns and the where clause.
+    conf.set(INPUT_CQL_QUERY_KEYSPACE + queryIndex, query.getKeyspace());
+    conf.set(INPUT_CQL_QUERY_TABLE + queryIndex, query.getTable());
+    conf.set(INPUT_CQL_QUERY_COLUMNS + queryIndex, query.getColumnCsv());
+    conf.set(INPUT_CQL_QUERY_WHERE_CLAUSES + queryIndex, query.getWhereClauses());
   }
 
   public static List<CqlQuerySpec> getInputCqlQueries(Configuration conf) {
@@ -61,8 +43,14 @@ public class NewCqlConfigHelper {
       String keyspace = conf.get(INPUT_CQL_QUERY_KEYSPACE + Integer.toString(i));
       String table = conf.get(INPUT_CQL_QUERY_TABLE + Integer.toString(i));
       String columnsCsv = conf.get(INPUT_CQL_QUERY_COLUMNS + Integer.toString(i));
-      String whereClauses = conf.get(INPUT_CQL_QUERY_WHERE_CLAUSES + Integer.toString(i));
-      queries.add(new CqlQuerySpec(keyspace, table, columnsCsv, whereClauses));
+      String whereClause = conf.get(INPUT_CQL_QUERY_WHERE_CLAUSES + Integer.toString(i));
+      queries.add(CqlQuerySpec.builder()
+          .withKeyspace(keyspace)
+          .withTable(table)
+          .withColumnsCsv(columnsCsv)
+          .withWhereClause(whereClause)
+          .build());
+
     }
     return queries;
   }
@@ -73,7 +61,7 @@ public class NewCqlConfigHelper {
   private static final String INPUT_CQL_QUERY_CLUSTERING_COLUMNS =
       "cassandra.input.query.clustering.columns";
 
-  public static void setInputCqlQueryClusteringColumnsCsv(Configuration conf, String... columns) {
+  public static void setInputCqlQueryClusteringColumns(Configuration conf, String... columns) {
     conf.set(INPUT_CQL_QUERY_CLUSTERING_COLUMNS, Joiner.on(",").join(columns));
   }
 
