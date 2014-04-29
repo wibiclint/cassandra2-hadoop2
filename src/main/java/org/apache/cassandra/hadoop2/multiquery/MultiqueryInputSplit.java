@@ -37,6 +37,9 @@ class MultiQueryInputSplit extends InputSplit implements Writable {
   // TODO: Is there a better answer here?
   private static final long SPLIT_LENGTH = 1L;
 
+  /** Not totally sure why we need this... */
+  public MultiQueryInputSplit() {}
+
   public static MultiQueryInputSplit createFromSubplit(Subsplit subsplit) {
     return new MultiQueryInputSplit(
         Lists.newArrayList(new TokenRange(subsplit.startToken, subsplit.endToken)),
