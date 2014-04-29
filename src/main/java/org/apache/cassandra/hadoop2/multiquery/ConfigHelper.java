@@ -102,12 +102,15 @@ public class ConfigHelper {
     conf.setInt(INPUT_NATIVE_TRANSPORT_PORT, port);
   }
 
-  public static int getDefaultInputNativeTransportPort(Configuration conf) {
+  public static int getInputNativeTransportPort(Configuration conf) {
     return conf.getInt(INPUT_NATIVE_TRANSPORT_PORT, DEFAULT_INPUT_NATIVE_TRANSPORT_PORT);
   }
 
   public static void setInputNativeTransportContactPoints(Configuration conf, String... contacts) {
     Preconditions.checkArgument(contacts.length> 0);
+    for (String contact : contacts) {
+      Preconditions.checkNotNull(contact);
+    }
     conf.setStrings(INPUT_NATIVE_TRANSPORT_CONTACT_POINTS, contacts);
   }
 

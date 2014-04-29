@@ -43,7 +43,7 @@ class SubsplitCombiner {
         numSubsplits / ConfigHelper.getDefaultInputTargetNumSplits(conf);
 
     // Group subsplits by host and try to combine subsplits that share a host.
-    List<Subsplit> subsplitsSortedByHost = getSubsetsSortedByHost(subsplits);
+    List<Subsplit> subsplitsSortedByHost = getSubsplitsSortedByHost(subsplits);
 
     List<MultiQueryInputSplit> inputSplits = Lists.newArrayList();
 
@@ -86,7 +86,7 @@ class SubsplitCombiner {
    * @param unsortedSubsplits An unsorted collection of subsplits.
    * @return A list of the subsplits, sorted by host.
    */
-  private List<Subsplit> getSubsetsSortedByHost(Collection<Subsplit> unsortedSubsplits) {
+  private List<Subsplit> getSubsplitsSortedByHost(Collection<Subsplit> unsortedSubsplits) {
     List<Subsplit> subsplitsSortedByHost = Lists.newArrayList(unsortedSubsplits);
     Collections.sort(
         subsplitsSortedByHost,

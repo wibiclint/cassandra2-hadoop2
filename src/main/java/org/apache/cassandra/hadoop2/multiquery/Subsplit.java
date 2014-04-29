@@ -6,6 +6,8 @@ import java.util.List;
 import java.util.Set;
 
 import com.google.common.base.Joiner;
+import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
 
 /**
@@ -15,9 +17,9 @@ import com.google.common.collect.Sets;
  */
 class Subsplit {
   // TODO: Add separate field for actual owner of token, versus replica nodes?
-  String startToken; // inclusive
-  String endToken; // inclusive
-  Set<String> hosts;
+  final String startToken; // inclusive
+  final String endToken; // inclusive
+  final Set<String> hosts;
 
   public final static long RING_START_TOKEN = Long.MIN_VALUE;
   public final static long RING_END_TOKEN = Long.MAX_VALUE;
@@ -56,9 +58,15 @@ class Subsplit {
    * @param hosts A set of replica nodes for this token range.
    */
   private Subsplit(String startToken, String endToken, Set<String> hosts) {
+    Preconditions.checkNotNull(hosts);
+    Preconditions.checkArgument(hosts.size() > 0);
+    for (String host : hosts) {
+      Preconditions.checkNotNull(host);
+      Preconditions.checkArgument(host.length() > 1);
+    }
     this.startToken = startToken;
     this.endToken = endToken;
-    this.hosts = hosts;
+    this.hosts = Sets.newHashSet(hosts);
   }
 
   /** {@inheritDoc} */
@@ -104,8 +112,11 @@ class Subsplit {
    * @return A CSV of hosts, as a string.
    */
   public String getSortedHostListAsString() {
-    List<String> hostList = new ArrayList(hosts);
+    Preconditions.checkNotNull(hosts);
+    List<String> hostList = Lists.newArrayList(hosts);
     Collections.sort(hostList);
+    Preconditions.checkNotNull(hostList);
+    Preconditions.checkArgument(hostList.size() > 0);
     return Joiner.on(",").join(hostList);
   }
 }

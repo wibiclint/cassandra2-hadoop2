@@ -74,8 +74,8 @@ class SubsplitCreator {
     sortedTokens.add(Subsplit.RING_START_TOKEN);
     sortedTokens.add(Subsplit.RING_END_TOKEN);
     Collections.sort(sortedTokens);
-    assert(sortedTokens.get(0) == Subsplit.RING_START_TOKEN);
-    assert(sortedTokens.get(sortedTokens.size()-1) == Subsplit.RING_END_TOKEN);
+    Preconditions.checkArgument(sortedTokens.get(0) == Subsplit.RING_START_TOKEN);
+    Preconditions.checkArgument(sortedTokens.get(sortedTokens.size() - 1) == Subsplit.RING_END_TOKEN);
 
     // Loop through all of the pairs of tokens, creating subsplits for every pair.  Remember in
     // C* that the master node for a token gets all data between the *previous* token and the token
@@ -85,22 +85,30 @@ class SubsplitCreator {
 
     for (int tokenIndex = 0; tokenIndex < sortedTokens.size() - 1; tokenIndex++) {
       long lowerBoundToken = sortedTokens.get(tokenIndex);
-      // Ownership for a given node looks like (previous token, my token], so we add 1 to the
-      // start token, unless the start token is the first token in our entire ring.
-      if (tokenIndex > 0) {
-        lowerBoundToken++;
-      }
+
       String startToken = Long.toString(lowerBoundToken);
       String endToken = sortedTokens.get(tokenIndex + 1).toString();
 
       String hostForEndToken = tokensToMasterNodes.get(endToken);
       if (tokenIndex == sortedTokens.size() - 2) {
-        assert(null == hostForEndToken);
+        Preconditions.checkArgument(null == hostForEndToken);
         hostForEndToken = tokensToMasterNodes.get(startToken);
+        Preconditions.checkNotNull(hostForEndToken);
       }
-      assert (null != hostForEndToken);
+      Preconditions.checkNotNull(hostForEndToken);
 
-      Subsplit subsplit = Subsplit.createFromHost(startToken, endToken, hostForEndToken);
+      // Ownership for a given node looks like (previous token, my token], so we add 1 to the
+      // start token, unless the start token is the first token in our entire ring.
+      final String startTokenAdjustedForExclusive;
+      if (tokenIndex > 0) {
+        startTokenAdjustedForExclusive = Long.toString(lowerBoundToken + 1);
+      } else {
+        startTokenAdjustedForExclusive = Long.toString(lowerBoundToken);
+      }
+      Subsplit subsplit = Subsplit.createFromHost(
+          startTokenAdjustedForExclusive,
+          endToken,
+          hostForEndToken);
       subsplits.add(subsplit);
     }
     return subsplits;
@@ -158,7 +166,7 @@ class SubsplitCreator {
       Set<String> tokens = row.getSet("tokens", String.class);
       InetAddress rpcAddress = row.getInet("rpc_address");
       String hostName = rpcAddress.getHostName();
-      assert (!hostName.equals("localhost"));
+      Preconditions.checkArgument(!hostName.equals("localhost"));
       updateTokenListForSingleNode(hostName, tokens, tokensToHosts);
     }
   }
@@ -179,7 +187,7 @@ class SubsplitCreator {
 
     // For every token, create an entry in the map from that token to the host.
     for (String token : tokens) {
-      assert (!tokensToHosts.containsKey(token));
+      Preconditions.checkArgument(!tokensToHosts.containsKey(token));
       tokensToHosts.put(token, hostName);
     }
   }

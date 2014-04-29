@@ -47,7 +47,7 @@ public class TestInputFormatWithBackgroundCassandra {
 
   private static final String KEYSPACE = "test_data";
   private static final String TABLE = "users";
-
+/*
   @Test
   public void testCreateSubsplits() throws IOException {
     // Set Cassandra / Hadoop input options.
@@ -63,12 +63,11 @@ public class TestInputFormatWithBackgroundCassandra {
     List<Subsplit> subsplits = subsplitCreator.createSubsplits();
 
     LOG.info(String.format("Got back %d subsplits", subsplits.size()));
-    /*
-    for (Subsplit subsplit: subsplits) {
-      LOG.info(subsplit.toString());
-    }
-    */
+    //for (Subsplit subsplit: subsplits) {
+      //LOG.info(subsplit.toString());
+    //}
   }
+  */
 
 
   @Test

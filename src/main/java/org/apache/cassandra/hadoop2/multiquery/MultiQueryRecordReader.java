@@ -358,7 +358,7 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
     Cluster cluster = Cluster
         .builder()
         .addContactPoints(ConfigHelper.getInputNativeTransportContactPoints(conf))
-        .withPort(ConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .withPort(ConfigHelper.getInputNativeTransportPort(conf))
         .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
         .build();
     return cluster.connect();

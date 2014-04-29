@@ -122,7 +122,7 @@ public class MultiQueryCqlInputFormat extends InputFormat<Text, Row> {
     Cluster cluster = Cluster
         .builder()
         .addContactPoints(ConfigHelper.getInputNativeTransportContactPoints(conf))
-        .withPort(ConfigHelper.getDefaultInputNativeTransportPort(conf))
+        .withPort(ConfigHelper.getInputNativeTransportPort(conf))
         .withLoadBalancingPolicy(new ConsistentHostOrderPolicy())
         .build();
     Session session = cluster.connect();
