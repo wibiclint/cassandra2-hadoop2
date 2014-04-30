@@ -61,7 +61,7 @@ import org.slf4j.LoggerFactory;
  * the user defined the where clause
  *   CQLConfigHelper.setInputWhereClauses. The default is no user defined where clause
  */
-public class MultiQueryCqlInputFormat extends InputFormat<Text, Row> {
+public class MultiQueryCqlInputFormat extends InputFormat<Text, List<Row>> {
   private static final Logger LOG = LoggerFactory.getLogger(MultiQueryCqlInputFormat.class);
 
   /**
@@ -93,11 +93,10 @@ public class MultiQueryCqlInputFormat extends InputFormat<Text, Row> {
    * {@inheritDoc}
    */
   @Override
-  public RecordReader<Text, Row> createRecordReader(
+  public RecordReader<Text, List<Row>> createRecordReader(
       InputSplit inputSplit,
       TaskAttemptContext context) {
-    //return new DataStaxCqlPagingRecordReader();
-    return null;
+    return new MultiQueryRecordReader();
   }
 
   /**

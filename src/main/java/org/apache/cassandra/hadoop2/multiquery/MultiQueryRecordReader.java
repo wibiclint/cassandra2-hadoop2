@@ -438,14 +438,17 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
 
   /** {@inheritDoc} */
   public boolean nextKeyValue() throws IOException {
-    if (mMultiRowIterator.hasNext()) {
-      mCurrentRows = mMultiRowIterator.next();
-      mRowCount += 1;
-      return true;
-    } else {
-      mCurrentRows = null;
-      return false;
+    while (mTokenRangeIterator.hasNext()) {
+      if (mMultiRowIterator.hasNext()) {
+        mCurrentRows = mMultiRowIterator.next();
+        mRowCount += 1;
+        return true;
+      } else {
+        queryNextTokenRange();
+      }
     }
+    mCurrentRows = null;
+    return false;
   }
 
   // -----------------------------------------------------------------------------------------------
