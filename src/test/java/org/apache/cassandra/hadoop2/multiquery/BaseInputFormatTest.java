@@ -248,6 +248,9 @@ public abstract class BaseInputFormatTest {
 
   @AfterClass
   public static void shutdown() {
+    // Just drop the keyspace.
+    Preconditions.checkNotNull(mSession);
+    mSession.execute("DROP KEYSPACE IF EXISTS " + KEYSPACE);
     /*
     Cluster cluster = mSession.getCluster();
     mSession.close();
