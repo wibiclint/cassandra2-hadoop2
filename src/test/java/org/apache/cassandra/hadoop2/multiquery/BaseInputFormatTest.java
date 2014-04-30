@@ -54,6 +54,8 @@ public abstract class BaseInputFormatTest {
 
   protected static Session mSession;
 
+  private static CassandraDaemon mCassandraDaemon = null;
+
   protected Configuration mConf;
 
   /**
@@ -80,8 +82,6 @@ public abstract class BaseInputFormatTest {
     mSession = cluster.connect();
   }
 
-  private static CassandraDaemon mCassandraDaemon = null;
-
   private static void deleteCassandraDirectories() {
     ArrayList<String> directoriesToDelete = Lists.newArrayList();
     directoriesToDelete.addAll(Arrays.asList(DatabaseDescriptor.getAllDataFileLocations()));
@@ -100,6 +100,9 @@ public abstract class BaseInputFormatTest {
   }
 
   private static void startEmbeddedCluster() throws IOException {
+    if (mSession != null) {
+      return;
+    }
     NATIVE_PORT = 9043;
     try {
       // Use a custom YAML file that specifies different ports from normal for RPC and thrift.
@@ -245,6 +248,7 @@ public abstract class BaseInputFormatTest {
 
   @AfterClass
   public static void shutdown() {
+    /*
     Cluster cluster = mSession.getCluster();
     mSession.close();
     cluster.close();
@@ -255,6 +259,7 @@ public abstract class BaseInputFormatTest {
     DatabaseDescriptor.createAllDirectories();
     deleteCassandraDirectories();
     DatabaseDescriptor.createAllDirectories();
+    */
   }
 
   private static class TeamData {
