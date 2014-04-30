@@ -203,6 +203,8 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
     for (CqlQuerySpec querySpec : querySpecs) {
       String queryString = createCqlQuery(querySpec);
       LOG.debug(queryString);
+      LOG.info("Created query:");
+      LOG.info(queryString);
       mCqlQueries.add(mSession.prepare(queryString));
     }
   }

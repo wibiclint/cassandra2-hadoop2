@@ -148,6 +148,10 @@ public class MultiQueryCqlInputFormat extends InputFormat<Text, Row> {
     // Java is annoying here about casting a list.
     inputSplitList.addAll(subsplitCombiner.combineSubsplits(subsplitsFromTokens));
     cluster.close();
+    LOG.info(String.format("Created a total of %d InputSplits", inputSplitList.size()));
+    for (InputSplit inputSplit : inputSplitList) {
+      LOG.info(inputSplit.toString());
+    }
     return inputSplitList;
   }
 

@@ -15,19 +15,25 @@ import com.datastax.driver.core.Cluster;
 import com.datastax.driver.core.PreparedStatement;
 import com.datastax.driver.core.Session;
 import com.google.common.base.Preconditions;
+import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.service.EmbeddedCassandraService;
+import org.apache.cassandra.db.commitlog.CommitLog;
+import org.apache.cassandra.service.CassandraDaemon;
 import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
+import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Test the multi-row iterator.
  */
 public abstract class BaseInputFormatTest {
+  private static final Logger LOG = LoggerFactory.getLogger(BaseInputFormatTest.class);
 
   protected static final String KEYSPACE = "nba";
   protected static final String TABLE_LOGOS = "logos";
@@ -74,6 +80,25 @@ public abstract class BaseInputFormatTest {
     mSession = cluster.connect();
   }
 
+  private static CassandraDaemon mCassandraDaemon = null;
+
+  private static void deleteCassandraDirectories() {
+    ArrayList<String> directoriesToDelete = Lists.newArrayList();
+    directoriesToDelete.addAll(Arrays.asList(DatabaseDescriptor.getAllDataFileLocations()));
+    directoriesToDelete.addAll(Arrays.asList(DatabaseDescriptor.getCommitLogLocation()));
+    directoriesToDelete.addAll(Arrays.asList(DatabaseDescriptor.getSavedCachesLocation()));
+
+    try {
+      for (String dirName : directoriesToDelete) {
+        LOG.debug("Deleting directory " + dirName);
+        FileUtils.deleteDirectory(new File(dirName));
+      }
+      LOG.debug("Deleted directories!");
+    } catch (IOException ioe) {
+      LOG.warn("Error deleting Cassandra directories!");
+    }
+  }
+
   private static void startEmbeddedCluster() throws IOException {
     NATIVE_PORT = 9043;
     try {
@@ -83,22 +108,33 @@ public abstract class BaseInputFormatTest {
 
       // TODO: Edit the YAML file to set up different directories, ports, etc. per test class?
 
-      assert (yamlFile.exists());
+      LOG.debug("Starting up embedded cluster!");
+
+      Preconditions.checkArgument(yamlFile.exists());
       System.setProperty("cassandra.config", "file:" + yamlFile.getAbsolutePath());
       System.setProperty("cassandra-foreground", "true");
 
       // Make sure that all of the directories for the commit log, data, and caches are empty.
       // Thank goodness there are methods to get this information (versus parsing the YAML directly).
-      ArrayList<String> directoriesToDelete = new ArrayList<String>(Arrays.asList(
-          DatabaseDescriptor.getAllDataFileLocations()
-      ));
-      directoriesToDelete.add(DatabaseDescriptor.getCommitLogLocation());
-      directoriesToDelete.add(DatabaseDescriptor.getSavedCachesLocation());
-      for (String dirName : directoriesToDelete) {
-        FileUtils.deleteDirectory(new File(dirName));
+      deleteCassandraDirectories();
+      DatabaseDescriptor.createAllDirectories();
+      deleteCassandraDirectories();
+      DatabaseDescriptor.createAllDirectories();
+
+      CommitLog.instance.resetUnsafe();
+
+      LOG.debug("Sleeping for a sec...");
+      try {
+        Thread.sleep(500);
+      } catch (InterruptedException ie) {
       }
-      EmbeddedCassandraService embeddedCassandraService = new EmbeddedCassandraService();
-      embeddedCassandraService.start();
+
+      mCassandraDaemon = new CassandraDaemon();
+      mCassandraDaemon.init(null);
+      mCassandraDaemon.start();
+
+      //EmbeddedCassandraService embeddedCassandraService = new EmbeddedCassandraService();
+      //embeddedCassandraService.start();
 
     } catch (IOException ioe) {
       throw new IOException("Cannot start embedded C* service!");
@@ -205,6 +241,20 @@ public abstract class BaseInputFormatTest {
     mConf = new Configuration();
     ConfigHelper.setInputNativeTransportContactPoints(mConf, "127.0.0.1");
     ConfigHelper.setInputNativeTransportPort(mConf, NATIVE_PORT);
+  }
+
+  @AfterClass
+  public static void shutdown() {
+    Cluster cluster = mSession.getCluster();
+    mSession.close();
+    cluster.close();
+    Preconditions.checkArgument(cluster.isClosed());
+    mCassandraDaemon.deactivate();
+    LOG.debug("Shut everything down...");
+    deleteCassandraDirectories();
+    DatabaseDescriptor.createAllDirectories();
+    deleteCassandraDirectories();
+    DatabaseDescriptor.createAllDirectories();
   }
 
   private static class TeamData {
