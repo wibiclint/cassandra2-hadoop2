@@ -203,8 +203,8 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
     for (CqlQuerySpec querySpec : querySpecs) {
       String queryString = createCqlQuery(querySpec);
       LOG.debug(queryString);
-      LOG.info("Created query:");
-      LOG.info(queryString);
+      LOG.debug("Created query:");
+      LOG.debug(queryString);
       mCqlQueries.add(mSession.prepare(queryString));
     }
   }
@@ -417,11 +417,11 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
 
   /** {@inheritDoc} */
   public List<Row> getCurrentValue() {
-    LOG.info("Returning row value.");
+    LOG.debug("Returning row value.");
     if (null == mCurrentRows) {
-      LOG.info("\tRow is null!");
+      LOG.debug("\tRow is null!");
     } else {
-      LOG.info("\tRow is not null!");
+      LOG.debug("\tRow is not null!");
     }
     return mCurrentRows;
   }
