@@ -66,6 +66,48 @@ public class TestRecordReader extends BaseInputFormatTest {
   }
 
   @Test
+  public void testWithWhereClause() {
+    // Very basic query, just select everything from the logos table.
+    ConfigHelper.setInputCqlQuery(
+        mConf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE_LOGOS)
+            .withWhereClause(String.format(
+                "WHERE %s < 'Los Angeles'",
+                COL_CITY
+            ))
+            .build()
+    );
+
+    MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
+
+    try {
+      recordReader.initializeWithConf(getCqlInputSplit(), mConf);
+
+      // Partition key here is just the state.
+      CqlQuerySpec querySpec = ConfigHelper.getInputCqlQueries(mConf).get(0);
+      List<String> partitioningKeys = recordReader.getPartitioningKeysForQuery(querySpec);
+      assertEquals(1, partitioningKeys.size());
+
+      // The RecordReader should group by primary key, so we should see a different List<Row> for
+      // each unique state.
+      int stateCount = 0;
+      while(true) {
+        if (!recordReader.nextKeyValue()) {
+          break;
+        }
+        List<Row> rowsThisTeam = recordReader.getCurrentValue();
+        String city = rowsThisTeam.get(0).getString(COL_CITY);
+        assertTrue("City = " + city, city.compareTo("Los Angeles") < 0);
+      }
+    } catch (IOException ioe) {
+      assertFalse("Should not get here.", false);
+    }
+  }
+
+
+  @Test
   public void testSelectAll() {
     // Very basic query, just select everything from the logos table.
     ConfigHelper.setInputCqlQuery(

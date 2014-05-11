@@ -23,7 +23,7 @@ package org.apache.cassandra.hadoop2.multiquery;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
@@ -284,6 +284,75 @@ public class SmokeIT {
         }
       }
       assertEquals(NUM_VALUES, numRows);
+    } catch (IOException ioe) {
+      throw new AssertionError();
+    }
+  }
+
+  @Test
+  public void testInputFormatWithWhereClause() {
+    Configuration conf = new Configuration();
+    ConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
+    ConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
+
+    final String MIN_CLUSTERING_COLUMN = "A";
+    final String MAX_CLUSTERING_COLUMN = "M";
+
+
+    // Simple query that reads all of the columns, groups by primary key.
+    ConfigHelper.setInputCqlQuery(
+        conf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE)
+            .withWhereClause(String.format(
+                "WHERE %s >= '%s' AND %s <= '%s'",
+                COL_CKEY3,
+                MIN_CLUSTERING_COLUMN,
+                COL_CKEY3,
+                MAX_CLUSTERING_COLUMN
+            ))
+            .build()
+    );
+
+    // Cluster by the clustering column in addition to the primary key.
+    ConfigHelper.setInputCqlQueryClusteringColumns(conf, COL_CKEY3);
+
+    MultiQueryCqlInputFormat inputFormat = new MultiQueryCqlInputFormat();
+
+    // Keep track of how many times we see a given partitioning key - should happen only once!
+    Set<Pair<Integer, Integer>> seenPartitionKeys = Sets.newHashSet();
+
+    try {
+      List<InputSplit> inputSplits = inputFormat.getSplitsFromConf(conf);
+      MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
+
+      int numRows = 0;
+
+      for (InputSplit inputSplit : inputSplits) {
+        recordReader.initializeWithConf(inputSplit, conf);
+
+        while (recordReader.nextKeyValue()) {
+          List<Row> rows = recordReader.getCurrentValue();
+          Integer pkey1 = rows.get(0).getInt(COL_PKEY1);
+          Integer pkey2 = rows.get(0).getInt(COL_PKEY2);
+          String ckey3 = rows.get(0).getString(COL_CKEY3);
+
+          // Make sure the clustering key is within range.
+          assertTrue("Clustering key " + ckey3 + " should be >= " + MIN_CLUSTERING_COLUMN, ckey3.compareTo(MIN_CLUSTERING_COLUMN) >= 0);
+          assertTrue("Clustering key " + ckey3 + " should be <= " + MAX_CLUSTERING_COLUMN, ckey3.compareTo(MAX_CLUSTERING_COLUMN) <= 0);
+
+          Pair<Integer, Integer> partitionKey = Pair.of(pkey1, pkey2);
+          assertFalse(seenPartitionKeys.contains(partitionKey));
+          seenPartitionKeys.add(partitionKey);
+
+          // All rows should have the same clustering column value!
+          for (Row row : rows) {
+            assertEquals(ckey3, row.getString(COL_CKEY3));
+          }
+          numRows++;
+        }
+      }
     } catch (IOException ioe) {
       throw new AssertionError();
     }

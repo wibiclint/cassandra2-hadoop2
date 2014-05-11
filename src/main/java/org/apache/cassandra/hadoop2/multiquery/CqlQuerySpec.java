@@ -17,6 +17,8 @@ public class CqlQuerySpec {
   private final List<String> mColumns;
   private final String mWhereClauses;
 
+  private static final String EMPTY_WHERE_CLAUSE = "";
+
   public static final String ALL_COLUMNS = "*";
 
   private CqlQuerySpec(String keyspace, String table, List<String> columns, String whereClauses) {
@@ -102,6 +104,12 @@ public class CqlQuerySpec {
                 "conditions combined with ANDs).");
       }
       Preconditions.checkNotNull(whereClause);
+      if (whereClause.equals(EMPTY_WHERE_CLAUSE)) {
+        return this;
+      }
+      if (!whereClause.toLowerCase().contains("where")) {
+        throw new IllegalArgumentException("WHERE clause must contain 'WHERE'");
+      }
       mWhereClause = whereClause;
       return this;
     }
@@ -114,7 +122,7 @@ public class CqlQuerySpec {
         throw new IllegalArgumentException("You must specify a table.");
       }
       if (null == mWhereClause) {
-        mWhereClause = "";
+        mWhereClause = EMPTY_WHERE_CLAUSE;
       }
 
       return new CqlQuerySpec(mKeyspace, mTable, mColumns, mWhereClause);
