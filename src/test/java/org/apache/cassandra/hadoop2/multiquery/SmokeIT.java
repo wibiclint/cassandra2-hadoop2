@@ -41,6 +41,7 @@ import org.apache.commons.lang.RandomStringUtils;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.mapreduce.InputSplit;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -88,11 +89,11 @@ public class SmokeIT {
    * Keep track of all of the data that we have written to the table so we can make sure that we
    * read it all back.
    */
-  private Map<Integer, Map<Integer, Map<String, Integer>>> mDataInTable;
+  private static Map<Integer, Map<Integer, Map<String, Integer>>> mDataInTable;
 
-  private Session mSession;
+  private static Session mSession;
 
-  private void createNewTable() {
+  private static void createNewTable() {
     mSession.execute(String.format(
         "CREATE KEYSPACE IF NOT EXISTS %s " +
             "WITH REPLICATION = { 'class' : 'SimpleStrategy', 'replication_factor' : 3 };",
@@ -112,7 +113,7 @@ public class SmokeIT {
         COL_CKEY3));
   }
 
-  private void createLotsOfData() {
+  private static void createLotsOfData() {
     Random random = new Random(SEED);
     mDataInTable = Maps.newHashMap();
     int numUniqueRows = 0;
@@ -145,7 +146,7 @@ public class SmokeIT {
     }
   }
 
-  private void insertDataIntoTable() {
+  private static void insertDataIntoTable() {
     PreparedStatement insertStatement = mSession.prepare(String.format(
         "INSERT INTO %s.%s (%s, %s, %s, %s) VALUES (?, ?, ?, ?)",
         KEYSPACE,
@@ -167,22 +168,26 @@ public class SmokeIT {
     }
   }
 
-  private void connectToCassandra() {
+  private static void connectToCassandra() {
     Cluster cluster = Cluster.builder().addContactPoint("127.0.0.1").build();
     mSession = cluster.connect();
   }
 
-  @Test
-  public void testInputFormat() {
+  @BeforeClass
+  public static void setup() {
     connectToCassandra();
-    Configuration conf = new Configuration();
-    ConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
-    ConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
-
     // Create a new table and populate it with lots and lots of data.
     createNewTable();
     createLotsOfData();
     insertDataIntoTable();
+  }
+
+  @Test
+  public void testInputFormat() {
+    Configuration conf = new Configuration();
+    ConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
+    ConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
+
 
     // Simple query that reads all of the columns, groups by primary key.
     ConfigHelper.setInputCqlQuery(
@@ -219,6 +224,62 @@ public class SmokeIT {
           //String ckey3 = rows.get(0).getString(COL_CKEY3);
           //assertEquals(1, rows.size());
           //int val = rows.get(0).getInt(COL_VAL);
+          numRows++;
+        }
+      }
+      assertEquals(NUM_VALUES, numRows);
+    } catch (IOException ioe) {
+      throw new AssertionError();
+    }
+  }
+
+  @Test
+  public void testInputFormatClusterByPrimaryKey() {
+    Configuration conf = new Configuration();
+    ConfigHelper.setInputNativeTransportContactPoints(conf, HOSTIP);
+    ConfigHelper.setInputNativeTransportPort(conf, NATIVE_PORT);
+
+
+    // Simple query that reads all of the columns, groups by primary key.
+    ConfigHelper.setInputCqlQuery(
+        conf,
+        CqlQuerySpec.builder()
+            .withKeyspace(KEYSPACE)
+            .withTable(TABLE)
+            .build()
+    );
+
+    // Cluster by the clustering column in addition to the primary key.
+    ConfigHelper.setInputCqlQueryClusteringColumns(conf, COL_CKEY3);
+
+    MultiQueryCqlInputFormat inputFormat = new MultiQueryCqlInputFormat();
+
+    // Keep track of how many times we see a given partitioning key - should happen only once!
+    Set<Pair<Integer, Integer>> seenPartitionKeys = Sets.newHashSet();
+
+    try {
+      List<InputSplit> inputSplits = inputFormat.getSplitsFromConf(conf);
+      MultiQueryRecordReader recordReader = new MultiQueryRecordReader();
+
+      int numRows = 0;
+
+      for (InputSplit inputSplit : inputSplits) {
+        recordReader.initializeWithConf(inputSplit, conf);
+
+        while (recordReader.nextKeyValue()) {
+          List<Row> rows = recordReader.getCurrentValue();
+          Integer pkey1 = rows.get(0).getInt(COL_PKEY1);
+          Integer pkey2 = rows.get(0).getInt(COL_PKEY2);
+          String ckey3 = rows.get(0).getString(COL_CKEY3);
+
+          Pair<Integer, Integer> partitionKey = Pair.of(pkey1, pkey2);
+          assertFalse(seenPartitionKeys.contains(partitionKey));
+          seenPartitionKeys.add(partitionKey);
+
+          // All rows should have the same clustering column value!
+          for (Row row : rows) {
+            assertEquals(ckey3, row.getString(COL_CKEY3));
+          }
           numRows++;
         }
       }

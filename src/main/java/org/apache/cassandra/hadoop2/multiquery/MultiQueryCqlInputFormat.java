@@ -149,7 +149,7 @@ public class MultiQueryCqlInputFormat extends InputFormat<Text, List<Row>> {
     cluster.close();
     LOG.info(String.format("Created a total of %d InputSplits", inputSplitList.size()));
     for (InputSplit inputSplit : inputSplitList) {
-      LOG.info(inputSplit.toString());
+      LOG.debug(inputSplit.toString());
     }
     return inputSplitList;
   }
