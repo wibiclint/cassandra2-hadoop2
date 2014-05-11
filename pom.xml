@@ -40,6 +40,9 @@
                         </goals>
                     </execution>
                 </executions>
+                <configuration>
+                    <numnodes>5</numnodes>
+                </configuration>
             </plugin>
         </plugins>
         <pluginManagement>
