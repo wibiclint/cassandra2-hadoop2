@@ -1,14 +1,20 @@
 cassandra2-hadoop2
 ==================
 
-Provides Hadoop-0.21+ integration into Cassandra 2.0.0.
+Hadoop `InputFormat` for Cassandra.  Works with Hadoop-0.21+ and Cassandra 2.x.
 
-Based on [work from michaelsembwever](https://github.com/michaelsembwever/cassandra-hadoop), which
-stems from Dave Brosius work in CASSANDRA-5201.
+Features beyond those supported in the standard InputFormat (at least when I started working on
+this!):
 
-Does not include any of the code for pig.
+* Works with Hadoop 2
+* Supports combining results from multiple queries over multiple tables (this works as long as the
+  different tables have the same primary key)
+* Supports grouping together Rows based on their partition key and an optional subset of clustering
+  columns
 
 To use:
+
+- Download and install this Maven Cassandra plugin: https://github.com/wibiclint/simple-cassandra-maven-plugin
 - Build and install into your local Maven repo: `mvn clean install`
 - Include as a dependency in the POM for your project:
 
@@ -18,20 +24,8 @@ To use:
             <version>0.1-SNAPSHOT</version>
         </dependency>
 
-Enjoy!
 
 
-## Issues:
-
-- If you specify a keyspace that does not exist, it hangs.
-
-## Testing
-
-Set up a multi-node Cassandra cluster locally using this Cassandra and Vagrant: https://github.com/dholbrook/vagrant-cassandra.
-
-## TODO items:
-
-- Populate table with different number of rows for different token ranges and check that we can
-  correctly estimate the number of rows per token range (for input split calculations).
-- Create data to insert into the table and validate that the Java driver agrees with getInputSplits
-  for what node will host that data.
+Based originally on work from
+[michaelsembwever](https://github.com/michaelsembwever/cassandra-hadoop), which stems from Dave
+Brosius's work in CASSANDRA-5201.
