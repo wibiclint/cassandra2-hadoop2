@@ -8,8 +8,12 @@ import com.google.common.base.Preconditions;
 import com.google.common.base.Splitter;
 import com.google.common.collect.Lists;
 import org.apache.hadoop.conf.Configuration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class ConfigHelper {
+  private static final Logger LOG = LoggerFactory.getLogger(ConfigHelper.class);
+
   /** This is just a static utility class. */
   private ConfigHelper() {
     throw new AssertionError();
@@ -62,7 +66,9 @@ public class ConfigHelper {
       "cassandra.input.query.clustering.columns";
 
   public static void setInputCqlQueryClusteringColumns(Configuration conf, String... columns) {
-    conf.set(INPUT_CQL_QUERY_CLUSTERING_COLUMNS, Joiner.on(",").join(columns));
+    String columnCsv = Joiner.on(",").join(columns);
+    LOG.info("Setting clustering columns " + columnCsv);
+    conf.set(INPUT_CQL_QUERY_CLUSTERING_COLUMNS, columnCsv);
   }
 
   public static List<String> getInputCqlQueryClusteringColumns(Configuration conf) {

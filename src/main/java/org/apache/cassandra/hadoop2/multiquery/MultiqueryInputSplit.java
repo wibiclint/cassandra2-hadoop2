@@ -102,8 +102,7 @@ class MultiQueryInputSplit extends InputSplit implements Writable {
   @Override
   public String toString() {
     return String.format(
-        "CqlInputSplit(%s, %s)",
-        tokenRanges,
+        "MultiqueryInputSplit(%s)",
         hosts
     );
   }
