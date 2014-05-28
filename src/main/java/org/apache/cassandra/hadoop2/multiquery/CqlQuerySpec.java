@@ -1,5 +1,6 @@
 package org.apache.cassandra.hadoop2.multiquery;
 
+import java.io.Serializable;
 import java.util.Arrays;
 import java.util.List;
 
@@ -11,21 +12,31 @@ import com.google.common.collect.Lists;
 /**
 * Specifies a Cassandra query to perform in a Hadoop RecordReader.
 */
-public class CqlQuerySpec {
+public class CqlQuerySpec implements Serializable {
   private final String mKeyspace;
   private final String mTable;
   private final List<String> mColumns;
-  private final String mWhereClauses;
+  private final WhereClause mWhereClauses;
 
-  private static final String EMPTY_WHERE_CLAUSE = "";
+  private static final WhereClause EMPTY_WHERE_CLAUSE = null;
 
   public static final String ALL_COLUMNS = "*";
 
-  private CqlQuerySpec(String keyspace, String table, List<String> columns, String whereClauses) {
+  public String toString() {
+    return String.format("CqlQuerySpec: SELECT %s FROM %s.%s WHERE %s",
+        mKeyspace,
+        mTable,
+        mColumns,
+        mWhereClauses
+    );
+  }
+
+  private CqlQuerySpec(
+      String keyspace, String table, List<String> columns, WhereClause whereClause) {
     mKeyspace = keyspace;
     mTable = table;
     mColumns = columns;
-    mWhereClauses = whereClauses;
+    mWhereClauses = whereClause;
   }
 
   public String getTable() {
@@ -43,7 +54,7 @@ public class CqlQuerySpec {
     return Joiner.on(",").join(mColumns);
   }
 
-  public String getWhereClauses() {
+  public WhereClause getWhereClauses() {
     return mWhereClauses;
   }
 
@@ -55,7 +66,7 @@ public class CqlQuerySpec {
     private String mKeyspace;
     private String mTable;
     private List<String> mColumns;
-    private String mWhereClause;
+    private WhereClause mWhereClause;
 
     public CqlQuerySpecBuilder() {
       mKeyspace = null;
@@ -97,20 +108,23 @@ public class CqlQuerySpec {
       return this;
     }
 
-    public CqlQuerySpecBuilder withWhereClause(String whereClause) {
+    public CqlQuerySpecBuilder withWhereClause(String rawWhereClause, Serializable... args) {
       if (mWhereClause != null) {
         throw new IllegalArgumentException(
             "You can specify only one where clause (although that clause can have multiple " +
                 "conditions combined with ANDs).");
       }
-      Preconditions.checkNotNull(whereClause);
-      if (whereClause.equals(EMPTY_WHERE_CLAUSE)) {
+      Preconditions.checkNotNull(rawWhereClause);
+      /*
+      if (rawWhereClause.equals(EMPTY_WHERE_CLAUSE)) {
+        Preconditions.checkArgument(args.length == 0);
         return this;
       }
-      if (!whereClause.toLowerCase().contains("where")) {
+      */
+      if (!rawWhereClause.toLowerCase().contains("where")) {
         throw new IllegalArgumentException("WHERE clause must contain 'WHERE'");
       }
-      mWhereClause = whereClause;
+      mWhereClause = new WhereClause(rawWhereClause, Lists.newArrayList(args));
       return this;
     }
 

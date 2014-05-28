@@ -18,13 +18,16 @@
 package org.apache.cassandra.hadoop2.multiquery;
 
 import java.io.IOException;
+import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Set;
 
+import com.datastax.driver.core.BoundStatement;
 import com.datastax.driver.core.Cluster;
+import com.datastax.driver.core.ColumnDefinitions;
 import com.datastax.driver.core.ColumnMetadata;
 import com.datastax.driver.core.DataType;
 import com.datastax.driver.core.Metadata;
@@ -115,7 +118,7 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
   private MultiQueryInputSplit mInputSplit;
 
   /** List of user-specified queries, with token ranges in them. */
-  private List<PreparedStatement> mCqlQueries;
+  private List<CqlQueryWithArgsToBind> mCqlQueries;
 
   /**
    * Iterator over all of the rows returned for all of our various queries.
@@ -180,6 +183,10 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
   private String getTokenColumn(Configuration conf) {
     List<CqlQuerySpec> cqlQuerySpecs =
         ConfigHelper.getInputCqlQueries(conf);
+    if (cqlQuerySpecs.size() == 0) {
+      throw new IllegalArgumentException(
+          "Cannot initialize RecordReader without specifying at least one query.");
+    }
 
     // Figure out the columns in the partition key.
     List<String> partitioningKeys = getPartitioningKeysForQuery(cqlQuerySpecs.get(0));
@@ -201,19 +208,19 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
     List<CqlQuerySpec> querySpecs = ConfigHelper.getInputCqlQueries(conf);
 
     for (CqlQuerySpec querySpec : querySpecs) {
-      String queryString = createCqlQuery(querySpec);
-      LOG.debug(queryString);
+      CqlQueryWithArgsToBind query = createCqlQuery(querySpec);
+      LOG.debug(query.toString());
       LOG.debug("Created query:");
-      LOG.debug(queryString);
-      mCqlQueries.add(mSession.prepare(queryString));
+      LOG.debug(query.toString());
+      mCqlQueries.add(query);
     }
   }
 
-  private String createCqlQuery(CqlQuerySpec querySpec) {
+  private CqlQueryWithArgsToBind createCqlQuery(CqlQuerySpec querySpec) {
     // TODO: Check that these don't have any quotes in them?
     final String keyspace = querySpec.getKeyspace();
     final String table = querySpec.getTable();
-    final String userDefinedWhereClauses = querySpec.getWhereClauses();
+    final WhereClause userDefinedWhereClauses = querySpec.getWhereClauses();
 
     // Construct a new where clause that include the token range.
     String whereTokenClause = String.format(
@@ -221,20 +228,29 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
         mTokenColumn,
         mTokenColumn);
     final String whereClause;
-    if (userDefinedWhereClauses.contains("WHERE")) {
-      whereClause = userDefinedWhereClauses + " AND " + whereTokenClause;
+    // Very important here that the token values are the *last* values to bind in the statement!
+    if (null != userDefinedWhereClauses) {
+      whereClause = userDefinedWhereClauses.getClause() + " AND " + whereTokenClause;
     } else {
       whereClause = "WHERE " + whereTokenClause;
     }
 
     final String columnCsv = getColumnCsvForQuery(querySpec);
 
-    return String.format(
+    final String queryString = String.format(
         "SELECT %s from \"%s\".\"%s\" %s ALLOW FILTERING",
         columnCsv,
         keyspace,
         table,
         whereClause
+    );
+
+    PreparedStatement preparedStatement = mSession.prepare(queryString);
+    return new CqlQueryWithArgsToBind(
+        preparedStatement,
+        userDefinedWhereClauses == null
+            ? Lists.<Serializable>newArrayList()
+            : userDefinedWhereClauses.getArgs()
     );
   }
 
@@ -368,9 +384,10 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
 
   private List<ResultSet> executeQueries(String startToken, String endToken) {
     List<ResultSetFuture> futures = Lists.newArrayList();
-    for (PreparedStatement preparedStatement : mCqlQueries) {
+    for (CqlQueryWithArgsToBind query : mCqlQueries) {
       futures.add(mSession.executeAsync(
-          preparedStatement.bind(Long.parseLong(startToken), Long.parseLong(endToken))
+          query.getStatementBoundExceptForTokenValues(
+              Long.parseLong(startToken), Long.parseLong(endToken))
       ));
     }
 
@@ -524,5 +541,46 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
         .getPartitionKey();
   }
 
+  private static class CqlQueryWithArgsToBind {
+    private final PreparedStatement mStatement;
 
+    private final List<Serializable> mArgsToBind;
+
+    public CqlQueryWithArgsToBind(PreparedStatement statement, List<Serializable> argsToBind) {
+      mStatement = statement;
+      mArgsToBind = argsToBind;
+    }
+
+    public BoundStatement getStatementBoundExceptForTokenValues(long startToken, long endToken)  {
+      // Need to do some inspection on the variables in the prepared statement to figure out how
+      // to case the list of objects before binding.
+      ColumnDefinitions columnDefinitions = mStatement.getVariables();
+      Preconditions.checkArgument(columnDefinitions.size() == 2 + mArgsToBind.size());
+
+      BoundStatement boundStatement = new BoundStatement(mStatement);
+      int columnNumber = 0;
+
+      // Loop through all of the non-token column, cast the arguments appropriately, and bind them
+      // to the statement.
+      for (ColumnDefinitions.Definition columnDef : columnDefinitions) {
+        if (columnNumber == mArgsToBind.size()) {
+          break;
+        }
+        // Figure out the class to which we need to cast our argument.
+        DataType dataType = columnDef.getType();
+        Class clazz = dataType.asJavaClass();
+
+        // Actually perform the cast and update the bound statement.
+        Object objectToBind = mArgsToBind.get(columnNumber);
+        if (!(clazz.isInstance(objectToBind))) {
+          throw new IllegalArgumentException(
+              "Cannot case " + objectToBind + " to Java class " + clazz + " for CQL data type " +
+                  dataType);
+        }
+        boundStatement = boundStatement.bind(clazz.cast(objectToBind));
+        columnNumber++;
+      }
+      return boundStatement.bind(startToken, endToken);
+    }
+  }
 }
