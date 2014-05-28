@@ -19,6 +19,7 @@ package org.apache.cassandra.hadoop2.multiquery;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Iterator;
@@ -542,6 +543,7 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
   }
 
   private static class CqlQueryWithArgsToBind {
+    private static final Logger LOG = LoggerFactory.getLogger(CqlQueryWithArgsToBind.class);
     private final PreparedStatement mStatement;
 
     private final List<Serializable> mArgsToBind;
@@ -552,6 +554,8 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
     }
 
     public BoundStatement getStatementBoundExceptForTokenValues(long startToken, long endToken)  {
+      LOG.debug("Binding values to statement " + mStatement.getQueryString());
+
       // Need to do some inspection on the variables in the prepared statement to figure out how
       // to case the list of objects before binding.
       ColumnDefinitions columnDefinitions = mStatement.getVariables();
@@ -560,27 +564,46 @@ public class MultiQueryRecordReader extends RecordReader<Text, List<Row>> {
       BoundStatement boundStatement = new BoundStatement(mStatement);
       int columnNumber = 0;
 
+      // Need to do some conversion between byte[] and ByteBuffer and add the tokens..
+      List<Object> bindValues = Lists.newArrayList();
+
       // Loop through all of the non-token column, cast the arguments appropriately, and bind them
       // to the statement.
       for (ColumnDefinitions.Definition columnDef : columnDefinitions) {
         if (columnNumber == mArgsToBind.size()) {
           break;
         }
+        LOG.debug("Applying binding for column # " + columnNumber + ": " + columnDef);
         // Figure out the class to which we need to cast our argument.
         DataType dataType = columnDef.getType();
         Class clazz = dataType.asJavaClass();
+        LOG.debug("DataType = " + dataType);
+        LOG.debug("Class = " + clazz);
 
         // Actually perform the cast and update the bound statement.
         Object objectToBind = mArgsToBind.get(columnNumber);
+        LOG.debug("Object to bind is " + objectToBind);
+
+        // This is super annoying...
+
+        // Special hack here in case the object to bind is a byte array.
+        if (objectToBind instanceof byte[]) {
+          LOG.debug("Transforming byte[] to ByteBuffer");
+          objectToBind = ByteBuffer.wrap((byte[]) objectToBind);
+        }
+
         if (!(clazz.isInstance(objectToBind))) {
           throw new IllegalArgumentException(
-              "Cannot case " + objectToBind + " to Java class " + clazz + " for CQL data type " +
+              "Cannot cast " + objectToBind + " to Java class " + clazz + " for CQL data type " +
                   dataType);
         }
-        boundStatement = boundStatement.bind(clazz.cast(objectToBind));
+        //boundStatement = boundStatement.bind(clazz.cast(objectToBind));
+        bindValues.add(clazz.cast(objectToBind));
         columnNumber++;
       }
-      return boundStatement.bind(startToken, endToken);
+      bindValues.add(startToken);
+      bindValues.add(endToken);
+      return boundStatement.bind(bindValues.toArray());
     }
   }
 }

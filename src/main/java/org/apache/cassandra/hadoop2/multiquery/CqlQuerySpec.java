@@ -22,15 +22,6 @@ public class CqlQuerySpec implements Serializable {
 
   public static final String ALL_COLUMNS = "*";
 
-  public String toString() {
-    return String.format("CqlQuerySpec: SELECT %s FROM %s.%s WHERE %s",
-        mKeyspace,
-        mTable,
-        mColumns,
-        mWhereClauses
-    );
-  }
-
   private CqlQuerySpec(
       String keyspace, String table, List<String> columns, WhereClause whereClause) {
     mKeyspace = keyspace;
@@ -142,7 +133,14 @@ public class CqlQuerySpec implements Serializable {
       return new CqlQuerySpec(mKeyspace, mTable, mColumns, mWhereClause);
 
     }
-
   }
 
+  public String toString() {
+    return String.format("CqlQuerySpec: SELECT %s FROM %s.%s WHERE %s",
+        mColumns.size() > 0 ? mColumns : "*",
+        mKeyspace,
+        mTable,
+        mWhereClauses
+    );
+  }
 }
